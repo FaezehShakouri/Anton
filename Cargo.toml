@@ -1,0 +1,35 @@
+[workspace]
+resolver = "2"
+members = [
+    "apps/desktop/src-tauri",
+    "crates/axen-core",
+]
+
+# Future members (added by later scaffold steps):
+#   "apps/agent"
+#   "crates/axen-zerog"
+#   "crates/axen-inference"
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.77"
+authors = ["Axen Team"]
+license = "MIT"
+repository = "https://github.com/axen-chat/axen"
+
+[workspace.dependencies]
+anyhow = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+zeroize = { version = "1", features = ["zeroize_derive"] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

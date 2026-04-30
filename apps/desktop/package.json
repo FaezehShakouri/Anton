@@ -1,0 +1,40 @@
+{
+  "name": "@axen/desktop",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Axen desktop app — Tauri 2 + React + TypeScript shell.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -b --noEmit",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
+  },
+  "dependencies": {
+    "@axen/axl-client": "workspace:*",
+    "@axen/shared-types": "workspace:*",
+    "@tauri-apps/api": "^2.11.0",
+    "@tauri-apps/plugin-shell": "^2.3.5",
+    "clsx": "^2.1.1",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-router-dom": "^7.14.0",
+    "tailwind-merge": "^3.5.0",
+    "viem": "^2.48.0",
+    "zustand": "^5.0.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.2.0",
+    "@tauri-apps/cli": "^2.11.0",
+    "@types/node": "^25.6.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^6.0.0",
+    "tailwindcss": "^4.2.0",
+    "typescript": "^6.0.0",
+    "vite": "^8.0.0"
+  }
+}

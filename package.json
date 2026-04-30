@@ -1,0 +1,23 @@
+{
+  "name": "axen",
+  "version": "0.0.0",
+  "private": true,
+  "description": "End-to-end encrypted chat on AXL + ENS, with an agent runtime backed by 0G Storage.",
+  "license": "MIT",
+  "packageManager": "pnpm@10.33.2",
+  "engines": {
+    "node": ">=20.10.0"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @axen/desktop dev",
+    "build": "pnpm -r build",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck",
+    "tauri": "pnpm --filter @axen/desktop tauri",
+    "contracts:build": "cd contracts && forge build",
+    "contracts:test": "cd contracts && forge test"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.0"
+  }
+}
