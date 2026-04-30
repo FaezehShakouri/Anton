@@ -1,0 +1,58 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+build/
+out/
+target/
+*.tsbuildinfo
+!apps/desktop/dist/.gitkeep
+
+# Tauri
+apps/desktop/src-tauri/target/
+apps/desktop/src-tauri/gen/
+apps/desktop/src-tauri/binaries/axl-*
+apps/desktop/src-tauri/binaries/0g-storage-client-*
+
+# Foundry
+contracts/cache/
+contracts/out/
+contracts/broadcast/
+contracts/.env
+contracts/lib/
+
+# IDE
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Env / secrets
+.env
+.env.local
+.env.*.local
+*.pem
+!apps/desktop/src-tauri/binaries/.gitkeep
+
+# Axen runtime artifacts (must never be committed)
+vault.bin
+agent-vault.bin
+settings.json
+node-config.json
+
+.cursor/
+docs/
