@@ -11,6 +11,7 @@ via_ir = false
 fs_permissions = [{ access = "read", path = "./" }]
 remappings = [
   "@openzeppelin/=lib/openzeppelin-contracts/",
+  "@ensdomains/ens-contracts/=lib/ens-contracts/contracts/",
   "durin/=lib/durin/",
   "forge-std/=lib/forge-std/src/",
 ]

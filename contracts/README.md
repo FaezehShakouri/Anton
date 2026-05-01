@@ -1,33 +1,38 @@
 # Axen contracts
 
-Foundry workspace housing the Axen smart contracts. The headline contract is `ChatRegistrar.sol`, an L2 registrar derived from [Durin's `L2Registrar`](https://github.com/namestonehq/durin/blob/main/src/examples/L2Registrar.sol) that mints `*.chat.eth` subnames on Base / Base Sepolia in a single transaction — including `addr(60)`, `axl_peer_id`, and `axl_pubkey` text records so the desktop app's onboarding flow is one tx, not three.
+Foundry workspace for Axen smart contracts. **`ChatRegistrar`** extends [Durin `L2Registrar`](https://github.com/namestonehq/durin/blob/main/src/examples/L2Registrar.sol) so a single transaction registers `*.chat.eth` subnames with:
 
-This is the scaffold step. The actual `ChatRegistrar` implementation, deployment scripts, and tests against Durin will land in subsequent plan steps.
+- `addr` for the deployment chain (ENSIP-11 `coinType`) and coin type `60` (Ethereum mainnet-style debugging aid, matching Durin's example registrar),
+- text record **`axl_peer_id`** — lowercase hex (`0x…`) encoding of the raw 32-byte ed25519 public key,
+- text record **`axl_pubkey`** — PEM string for operators and tooling.
 
 ## Layout
 
 ```
 contracts/
-├── foundry.toml        # solc 0.8.27, base/base-sepolia RPCs, etherscan keys
-├── remappings.txt      # OpenZeppelin + Durin + forge-std
+├── foundry.toml            # solc 0.8.27, Base RPCs, etherscan keys
+├── remappings.txt          # OpenZeppelin + ENS contracts + Durin + forge-std
 ├── src/
-│   └── ChatRegistrar.sol   # placeholder; real impl in a later step
+│   ├── ChatRegistrar.sol
+│   └── libraries/Hex.sol # hex helper + unit tests
 ├── script/
-│   └── Deploy.s.sol        # placeholder
+│   ├── Deploy.s.sol        # deploy ChatRegistrar(L2_REGISTRY)
+│   └── AddRegistrar.s.sol  # IL2Registry.addRegistrar (owner-only)
 └── test/
-    └── ChatRegistrar.t.sol # placeholder
+    └── ChatRegistrar.t.sol # Hex + stub-registry integration tests
 ```
 
-## Setup (once Foundry is installed)
+## Dependencies
+
+This repo lists `contracts/lib/` in `.gitignore`; clone deps locally:
 
 ```bash
 curl -L https://foundry.paradigm.xyz | bash && foundryup
-forge install foundry-rs/forge-std
-forge install OpenZeppelin/openzeppelin-contracts
-forge install namestonehq/durin
+cd contracts
+forge install foundry-rs/forge-std OpenZeppelin/openzeppelin-contracts ensdomains/ens-contracts namestonehq/durin
 ```
 
-## Useful commands
+## Commands
 
 ```bash
 forge build
@@ -35,10 +40,40 @@ forge test -vvv
 forge fmt
 ```
 
-## Deployment plan (per the design doc)
+## Deploy on Base Sepolia
 
-1. Use Durin's existing factory `0xDddddDdDDD8Aa1f237b4fa0669cb46892346d22d` on Base / Base Sepolia to mint the L2 Registry for `chat.eth`.
-2. Deploy `ChatRegistrar.sol` and call `addRegistrar(ChatRegistrar)` from the registry owner (the team wallet that owns `chat.eth`).
-3. Configure the L1 resolver: set `chat.eth`'s resolver to `0x8A968aB9eb8C084FBC44c531058Fc9ef945c3D61` and call `setL2Registry(...)` once via the ENS app.
+Prerequisites:
 
-See `docs/architecture.md` for the larger picture.
+1. An initialized Durin **`L2Registry`** whose `name()` / `baseNode` corresponds to `chat.eth` (deploy via Durin's tooling or factory — see [Durin](https://github.com/namestonehq/durin)).
+2. `.env` loaded (`source .env` or `forge script ... --account` patterns you prefer).
+
+```bash
+cd contracts
+cp .env.example .env   # fill PRIVATE_KEY, L2_REGISTRY, RPC URLs
+
+# 1) Deploy ChatRegistrar
+forge script script/Deploy.s.sol \
+  --rpc-url "$BASE_SEPOLIA_RPC_URL" \
+  --broadcast \
+  --verify
+
+# 2) Registry owner grants registrar role (same owner key as IL2Registry admin)
+export CHAT_REGISTRAR=0x...   # from deploy logs
+forge script script/AddRegistrar.s.sol \
+  --rpc-url "$BASE_SEPOLIA_RPC_URL" \
+  --broadcast
+```
+
+Users can then call `registerWithRecords(label, owner, peerId32, pubkeyPem)` from any wallet; only the controller needs to be an approved registrar.
+
+## L1 resolver wiring (`chat.eth`)
+
+Off-chain clients resolve `alice.chat.eth` through ENS on L1 using Durin's CCIP-Read resolver pattern: the name's resolver answers `resolve()` with a gateway proof that reads state from the L2 registry contract.
+
+High-level checklist (exact UX varies by ENS app version):
+
+1. Set **`chat.eth`'s resolver** on Ethereum mainnet to Durin's canonical resolver (see current addresses in [Durin docs](https://github.com/namestonehq/durin) / NameStone operator guides).
+2. Call **`setL2Registry(<your Base Sepolia L2Registry address>)`** (or equivalent wire-up your deployment uses) so L1 resolution targets your registry.
+3. Confirm **`addr(node, 60)`** and **`text(node, "axl_peer_id")`** match expectations for a test subname after `registerWithRecords`.
+
+See [`docs/architecture.md`](../docs/architecture.md) for how Axen consumes these records.
