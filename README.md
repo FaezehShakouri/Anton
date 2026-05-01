@@ -41,7 +41,7 @@ Local development assumes:
 
 - Node.js ≥ 20.10
 - pnpm ≥ 9 (`corepack enable && corepack prepare pnpm@latest --activate`)
-- Rust ≥ 1.77 with `rustup` (`rustup target add aarch64-apple-darwin x86_64-apple-darwin x86_64-pc-windows-msvc x86_64-unknown-linux-gnu` for cross-targets later)
+- Rust ≥ 1.91 with `rustup` (`rustup target add aarch64-apple-darwin x86_64-apple-darwin x86_64-pc-windows-msvc x86_64-unknown-linux-gnu` for cross-targets later)
 - [Foundry](https://book.getfoundry.sh) (`curl -L https://foundry.paradigm.xyz | bash && foundryup`) for the `contracts/` workspace
 - Tauri 2 system deps: see [tauri.app/start/prerequisites](https://tauri.app/start/prerequisites/)
 
