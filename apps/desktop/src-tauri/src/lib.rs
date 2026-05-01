@@ -1,16 +1,22 @@
 use tauri::Manager;
 use tauri::RunEvent;
 
+mod chat;
 mod commands;
+mod messaging;
+mod onboarding;
+mod recv_loop;
+mod session;
 mod sidecar;
+
+use messaging::MessagingState;
+use session::IdentitySessionState;
+
+use chat::{ChatState, ResolverState};
 
 pub use sidecar::{AxlSidecar, AxlSidecarState, SidecarError};
 
 /// Returns the version string baked in at compile time.
-///
-/// Wired up here as a placeholder so `lib.rs` exposes at least one Tauri
-/// command. Real commands (`onboarding_*`, `unlock_vault`, `chat_send`, …)
-/// land alongside the Rust core in a later scaffold step.
 #[tauri::command]
 fn app_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
@@ -29,21 +35,50 @@ pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .manage(AxlSidecarState::default())
+        .manage(MessagingState::default())
+        .manage(IdentitySessionState::default())
+        .manage(ChatState::default())
         .setup(|app| {
             tracing::info!(
                 version = env!("CARGO_PKG_VERSION"),
                 data_dir = ?app.path().app_data_dir().ok(),
-                "axen desktop starting"
+                "anton desktop starting"
             );
+            let (rpc, ens_config) = anton_core::ens::ens_rpc_and_resolver_config();
+            match anton_core::ens::connect_http(&rpc, ens_config) {
+                Ok(r) => {
+                    let resolver: std::sync::Arc<dyn anton_core::ens::IdentityResolver> =
+                        std::sync::Arc::new(r);
+                    app.manage(ResolverState(resolver.clone()));
+                    let handle = app.handle().clone();
+                    tauri::async_runtime::spawn(recv_loop::run(handle, resolver));
+                }
+                Err(e) => tracing::warn!(target: "anton::ens", "ENS client not started: {e}"),
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             app_version,
             commands::ping,
             commands::axl_topology,
+            commands::settings_set_bootstrap_peers,
+            messaging::messaging_ingest_verified_inbound,
+            messaging::messaging_list_peer_messages,
+            onboarding::onboarding_generate_mnemonic,
+            onboarding::onboarding_derived_preview,
+            onboarding::onboarding_commit_vault,
+            onboarding::vault_exists,
+            onboarding::unlock_vault,
+            onboarding::onboarding_check_username,
+            onboarding::register_username,
+            chat::ens_resolve,
+            chat::chat_open,
+            chat::chat_close,
+            chat::chat_send,
+            chat::chat_history,
         ])
         .build(tauri::generate_context!())
-        .expect("error while building axen desktop");
+        .expect("error while building anton desktop");
 
     // Shut the AXL sidecar down before the process exits, regardless of
     // whether the exit was triggered by Cmd-Q, the close button, or a

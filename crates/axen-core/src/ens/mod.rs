@@ -1,12 +1,14 @@
-//! ENS resolution for Axen identities (`*.chat.eth`).
+//! ENS resolution for Anton identities (`*.anton.eth`).
 //!
-//! Uses Ethereum mainnet RPC with [alloy]'s ENS bindings: forward lookups go through the
-//! canonical Universal Resolver (CCIP-Read / EIP-3668 aware). Reverse lookups use the same
-//! Universal Resolver entrypoint so L2-backed reverse records work when the resolver exposes them.
+//! Uses Ethereum L1 JSON-RPC with [alloy]'s ENS bindings: forward lookups go through the
+//! Universal Resolver (CCIP-Read / EIP-3668 aware) on the same chain as the RPC URL — mainnet,
+//! Sepolia, etc. See [`resolver::ens_rpc_and_resolver_config`] for environment wiring.
 
+mod bootstrap;
 mod resolver;
 
+pub use bootstrap::fetch_axl_bootstrap_peers;
 pub use resolver::{
-    connect_http, normalize_chat_name, parse_axl_peer_hex, EnsResolver, EnsResolverConfig,
-    IdentityResolver, ResolvedIdentity,
+    connect_http, ens_rpc_and_resolver_config, normalize_chat_name, parse_axl_peer_hex,
+    EnsResolver, EnsResolverConfig, IdentityResolver, ResolvedIdentity,
 };

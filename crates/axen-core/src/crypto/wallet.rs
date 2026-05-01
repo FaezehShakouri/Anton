@@ -10,12 +10,12 @@ use k256::ecdsa::{RecoveryId, Signature, SigningKey, VerifyingKey};
 use tiny_keccak::{Hasher, Keccak};
 use zeroize::Zeroizing;
 
-use crate::error::{AxenError, Result};
+use crate::error::{AntonError, Result};
 
 /// Standard Ethereum derivation path. We always derive the first account.
 pub const WALLET_DERIVATION_PATH: &str = "m/44'/60'/0'/0/0";
 
-/// secp256k1 wallet that owns an Axen ENS identity.
+/// secp256k1 wallet that owns an Anton ENS identity.
 ///
 /// The signing key is held inside the underlying `SigningKey` which is
 /// `ZeroizeOnDrop` in `k256 0.13`, so it's wiped from memory when the
@@ -25,7 +25,7 @@ pub struct Wallet {
 }
 
 impl Wallet {
-    /// Derive the canonical Axen wallet from a BIP39 seed
+    /// Derive the canonical Anton wallet from a BIP39 seed
     /// (`m/44'/60'/0'/0/0`).
     pub fn from_seed(seed: &[u8; 64]) -> Result<Self> {
         Self::from_seed_path(seed, WALLET_DERIVATION_PATH)
@@ -34,9 +34,9 @@ impl Wallet {
     /// Derive a wallet at an arbitrary BIP32 path. Used by tests and
     /// (later) multi-account flows.
     pub fn from_seed_path(seed: &[u8; 64], path: &str) -> Result<Self> {
-        let path: DerivationPath = path.parse().map_err(|_| AxenError::InvalidDerivationPath)?;
+        let path: DerivationPath = path.parse().map_err(|_| AntonError::InvalidDerivationPath)?;
         let xprv = XPrv::derive_from_path(seed.as_slice(), &path)
-            .map_err(|_| AxenError::Bip32Derivation)?;
+            .map_err(|_| AntonError::Bip32Derivation)?;
         let signing_key: SigningKey = xprv.private_key().clone();
         Ok(Self { signing_key })
     }
@@ -71,7 +71,7 @@ impl Wallet {
         let (sig, rec) = self
             .signing_key
             .sign_prehash_recoverable(digest)
-            .map_err(|_| AxenError::InvalidSignature)?;
+            .map_err(|_| AntonError::InvalidSignature)?;
         encode_signature(&sig, rec)
     }
 }
@@ -97,12 +97,12 @@ pub fn recover_address(digest: &[u8; 32], sig_bytes: &[u8; 65]) -> Result<Addres
     let recovery_byte = match v {
         0 | 1 => v,
         27 | 28 => v - 27,
-        _ => return Err(AxenError::InvalidSignature),
+        _ => return Err(AntonError::InvalidSignature),
     };
-    let recovery_id = RecoveryId::from_byte(recovery_byte).ok_or(AxenError::InvalidSignature)?;
-    let sig = Signature::from_slice(&sig_bytes[..64]).map_err(|_| AxenError::InvalidSignature)?;
+    let recovery_id = RecoveryId::from_byte(recovery_byte).ok_or(AntonError::InvalidSignature)?;
+    let sig = Signature::from_slice(&sig_bytes[..64]).map_err(|_| AntonError::InvalidSignature)?;
     let vk = VerifyingKey::recover_from_prehash(digest, &sig, recovery_id)
-        .map_err(|_| AxenError::InvalidSignature)?;
+        .map_err(|_| AntonError::InvalidSignature)?;
     Ok(verifying_key_to_address(&vk))
 }
 

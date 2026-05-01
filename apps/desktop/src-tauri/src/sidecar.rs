@@ -1,7 +1,7 @@
 //! AXL sidecar lifecycle management.
 //!
 //! Tauri-specific glue around the process-agnostic transport layer in
-//! `axen-core::axl`. This module:
+//! `anton-core::axl`. This module:
 //!
 //! 1. Materializes the derived ed25519 PEM (recovered from the BIP39
 //!    seed at unlock time) to `app_data_dir/axl/private.pem`.
@@ -22,11 +22,11 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use axen_core::axl::{
+use anton_core::axl::{
     write_axl_private_pem, write_node_config_json, AxlHttpClient, AxlPaths, AxlRuntimeConfig,
     AxlTransport, DEFAULT_AXL_BRIDGE_URL,
 };
-use axen_core::crypto::ed25519::Ed25519Identity;
+use anton_core::crypto::ed25519::Ed25519Identity;
 use parking_lot::Mutex;
 use tauri::async_runtime;
 use tauri::{AppHandle, Manager, Runtime};
@@ -39,26 +39,59 @@ pub const SIDECAR_NAME: &str = "axl";
 
 /// Default fallback bootstrap peers, baked into the binary so a
 /// first-run install can connect even when the ENS lookup of
-/// `chat.eth → axl_bootstrap_peers` fails (e.g. RPC outage). The real
+/// `anton.eth → axl_bootstrap_peers` fails (e.g. RPC outage). The real
 /// host names land in the `bootstrap-nodes` plan step; until then this
 /// is just a placeholder we ship so the path is wired up.
 pub const FALLBACK_BOOTSTRAP_PEERS: &[&str] =
-    &["tls://bootstrap-1.axen.chat:9001", "tls://bootstrap-2.axen.chat:9001"];
+    &["tls://bootstrap-1.anton.chat:9001", "tls://bootstrap-2.anton.chat:9001"];
+
+/// Baked-in fallbacks, then ENS `anton.eth` → `axl_bootstrap_peers` (same RPC/UR as
+/// [`anton_core::ens::ens_rpc_and_resolver_config`]), then `settings.json` `bootstrap_peers`,
+/// de-duplicated in order.
+pub async fn merged_bootstrap_peers<R: Runtime>(app: &AppHandle<R>) -> Vec<String> {
+    let mut out: Vec<String> = FALLBACK_BOOTSTRAP_PEERS.iter().map(|s| (*s).to_string()).collect();
+
+    let (rpc, ens_cfg) = anton_core::ens::ens_rpc_and_resolver_config();
+    match anton_core::ens::fetch_axl_bootstrap_peers(&rpc, ens_cfg).await {
+        Ok(v) => {
+            for p in v {
+                if !out.contains(&p) {
+                    out.push(p);
+                }
+            }
+        }
+        Err(e) => tracing::warn!(target: "anton::bootstrap", "fetch_axl_bootstrap_peers: {e}"),
+    }
+
+    if let Ok(dir) = app.path().app_data_dir() {
+        let path = anton_core::settings::Settings::default_path(&dir);
+        if let Ok(settings) = anton_core::settings::Settings::load_or_default(&path) {
+            for p in settings.bootstrap_peers {
+                if !out.contains(&p) {
+                    out.push(p);
+                }
+            }
+        }
+    }
+
+    out
+}
 
 #[derive(Debug, Error)]
 pub enum SidecarError {
-    #[error("axen-core: {0}")]
-    Core(#[from] axen_core::AxenError),
+    #[error("anton-core: {0}")]
+    Core(#[from] anton_core::AntonError),
     #[error("tauri shell: {0}")]
     Shell(#[from] tauri_plugin_shell::Error),
     #[error("tauri: {0}")]
     Tauri(#[from] tauri::Error),
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
-    #[error("axl sidecar bridge {bridge_url} did not respond within {waited:?}")]
+    #[error("axl sidecar bridge {bridge_url} did not respond within {waited:?}: {last_error}")]
     BridgeTimeout {
         bridge_url: String,
         waited: Duration,
+        last_error: String,
     },
 }
 
@@ -105,10 +138,10 @@ impl AxlSidecar {
         //    up before returning so callers don't see a connect error
         //    on the first send/recv.
         let transport = AxlTransport::new(AxlHttpClient::new()?);
-        wait_for_bridge(&transport, Duration::from_secs(15)).await?;
+        wait_for_bridge(&transport, Duration::from_secs(30)).await?;
 
         tracing::info!(
-            target: "axen::sidecar",
+            target: "anton::sidecar",
             "axl sidecar launched (bridge {})",
             DEFAULT_AXL_BRIDGE_URL,
         );
@@ -136,9 +169,9 @@ impl AxlSidecar {
         if let Some(child) = self.child.lock().take() {
             let pid = child.pid();
             if let Err(err) = child.kill() {
-                tracing::warn!(target: "axen::sidecar", "failed to kill axl sidecar (pid {pid}): {err}");
+                tracing::warn!(target: "anton::sidecar", "failed to kill axl sidecar (pid {pid}): {err}");
             } else {
-                tracing::info!(target: "axen::sidecar", "axl sidecar (pid {pid}) shut down");
+                tracing::info!(target: "anton::sidecar", "axl sidecar (pid {pid}) shut down");
             }
         }
     }
@@ -176,7 +209,7 @@ fn spawn_axl<R: Runtime>(app: &AppHandle<R>, config_path: &Path) -> SidecarResul
 
     let (mut rx, child) = command.spawn()?;
     let pid = child.pid();
-    tracing::info!(target: "axen::sidecar", "spawned axl sidecar (pid {pid})");
+    tracing::info!(target: "anton::sidecar", "spawned axl sidecar (pid {pid})");
 
     // Drain stdout/stderr in the background so the pipe doesn't fill
     // up; emit each line into the tracing subscriber under `axl`.
@@ -212,18 +245,21 @@ async fn wait_for_bridge(transport: &AxlTransport, deadline: Duration) -> Sideca
     let start = Instant::now();
     let mut backoff = Duration::from_millis(50);
     let max_backoff = Duration::from_millis(500);
-
     loop {
-        if transport.client().topology().await.is_ok() {
-            return Ok(());
+        match transport.client().topology().await {
+            Ok(_) => return Ok(()),
+            Err(e) => {
+                let last_error = e.to_string();
+                if start.elapsed() >= deadline {
+                    return Err(SidecarError::BridgeTimeout {
+                        bridge_url: transport.client().base_url().to_owned(),
+                        waited: deadline,
+                        last_error,
+                    });
+                }
+                tokio::time::sleep(backoff).await;
+                backoff = (backoff * 2).min(max_backoff);
+            }
         }
-        if start.elapsed() >= deadline {
-            return Err(SidecarError::BridgeTimeout {
-                bridge_url: transport.client().base_url().to_owned(),
-                waited: deadline,
-            });
-        }
-        tokio::time::sleep(backoff).await;
-        backoff = (backoff * 2).min(max_backoff);
     }
 }

@@ -7,9 +7,9 @@
 //!    over a domain-separated typed-data hash.
 //! 2. If we ever surface the signature in a UI (e.g. a debug
 //!    inspector), EIP-712's typed structure is human-readable.
-//! 3. The domain separator binds the signature to Axen specifically, so
+//! 3. The domain separator binds the signature to Anton specifically, so
 //!    a signature minted for some other dapp can't be replayed inside an
-//!    Axen envelope.
+//!    Anton envelope.
 //!
 //! We sign the small fixed-size struct below — the `body` field of the
 //! larger envelope is hashed into `bodyHash` so the typed-data shape
@@ -19,14 +19,14 @@ use alloy_primitives::{keccak256, Address, B256};
 use alloy_sol_types::{eip712_domain, sol, Eip712Domain, SolStruct};
 
 use crate::crypto::wallet::{recover_address, Wallet};
-use crate::error::{AxenError, Result};
+use crate::error::{AntonError, Result};
 
 sol! {
-    /// EIP-712 typed-data structure that gets signed for every Axen chat
+    /// EIP-712 typed-data structure that gets signed for every Anton chat
     /// envelope. Mirrors the in-RAM `Envelope` shape but with `body`
     /// hashed down to a fixed-size `bytes32`.
     #[derive(Debug)]
-    struct AxenEnvelope {
+    struct AntonEnvelope {
         string from;
         string to;
         string kind;
@@ -37,14 +37,14 @@ sol! {
 }
 
 /// Domain separator. We deliberately omit `chainId` and `verifyingContract`
-/// — Axen envelopes are not chain-bound and there's no on-chain verifier
+/// — Anton envelopes are not chain-bound and there's no on-chain verifier
 /// that needs to reconstruct this domain.
-pub const AXEN_DOMAIN: Eip712Domain = eip712_domain! {
-    name: "Axen",
+pub const ANTON_DOMAIN: Eip712Domain = eip712_domain! {
+    name: "Anton",
     version: "1",
 };
 
-/// Plain Rust mirror of [`AxenEnvelope`] used by the rest of the core
+/// Plain Rust mirror of [`AntonEnvelope`] used by the rest of the core
 /// (the `messaging/` module and the chat handler).
 #[derive(Clone, Debug)]
 pub struct EnvelopeFields<'a> {
@@ -61,8 +61,8 @@ pub struct EnvelopeFields<'a> {
 }
 
 impl EnvelopeFields<'_> {
-    fn build_typed(&self) -> AxenEnvelope {
-        AxenEnvelope {
+    fn build_typed(&self) -> AntonEnvelope {
+        AntonEnvelope {
             from: self.from.to_owned(),
             to: self.to.to_owned(),
             kind: self.kind.to_owned(),
@@ -75,7 +75,7 @@ impl EnvelopeFields<'_> {
     /// 32-byte EIP-712 signing hash. Exposed for tests and for callers
     /// that want to sign with a key not held in a [`Wallet`].
     pub fn signing_hash(&self) -> B256 {
-        self.build_typed().eip712_signing_hash(&AXEN_DOMAIN)
+        self.build_typed().eip712_signing_hash(&ANTON_DOMAIN)
     }
 }
 
@@ -87,7 +87,7 @@ pub fn sign_envelope(wallet: &Wallet, fields: EnvelopeFields<'_>) -> Result<[u8;
 }
 
 /// Verify an envelope signature against the expected wallet address. This
-/// is the second half of Axen's dual identity check (the first being
+/// is the second half of Anton's dual identity check (the first being
 /// `X-From-Peer-Id` matching the resolved `axl_peer_id` text record).
 pub fn verify_envelope(
     fields: EnvelopeFields<'_>,
@@ -97,7 +97,7 @@ pub fn verify_envelope(
     let digest_bytes: [u8; 32] = fields.signing_hash().into();
     let recovered = recover_address(&digest_bytes, sig)?;
     if recovered != expected_address {
-        return Err(AxenError::SignatureMismatch);
+        return Err(AntonError::SignatureMismatch);
     }
     Ok(())
 }
@@ -119,8 +119,8 @@ mod tests {
     fn sign_then_verify_round_trip() {
         let wallet = test_wallet();
         let fields = EnvelopeFields {
-            from: "alice.chat.eth",
-            to: "bob.chat.eth",
+            from: "alice.anton.eth",
+            to: "bob.anton.eth",
             kind: "chat.text.v1",
             ts: 1_700_000_000,
             nonce: 1,
@@ -134,8 +134,8 @@ mod tests {
     fn body_tampering_fails_verification() {
         let wallet = test_wallet();
         let fields = EnvelopeFields {
-            from: "alice.chat.eth",
-            to: "bob.chat.eth",
+            from: "alice.anton.eth",
+            to: "bob.anton.eth",
             kind: "chat.text.v1",
             ts: 1_700_000_000,
             nonce: 1,
@@ -144,23 +144,23 @@ mod tests {
         let sig = sign_envelope(&wallet, fields).unwrap();
 
         let tampered = EnvelopeFields {
-            from: "alice.chat.eth",
-            to: "bob.chat.eth",
+            from: "alice.anton.eth",
+            to: "bob.anton.eth",
             kind: "chat.text.v1",
             ts: 1_700_000_000,
             nonce: 1,
             body: b"hellp",
         };
         let err = verify_envelope(tampered, &sig, wallet.address()).unwrap_err();
-        assert!(matches!(err, AxenError::SignatureMismatch));
+        assert!(matches!(err, AntonError::SignatureMismatch));
     }
 
     #[test]
     fn wrong_address_fails_verification() {
         let wallet = test_wallet();
         let fields = EnvelopeFields {
-            from: "alice.chat.eth",
-            to: "bob.chat.eth",
+            from: "alice.anton.eth",
+            to: "bob.anton.eth",
             kind: "chat.text.v1",
             ts: 1_700_000_000,
             nonce: 1,
@@ -170,15 +170,15 @@ mod tests {
         let other: Address = "0x0000000000000000000000000000000000000001".parse().unwrap();
         assert!(matches!(
             verify_envelope(fields, &sig, other).unwrap_err(),
-            AxenError::SignatureMismatch
+            AntonError::SignatureMismatch
         ));
     }
 
     #[test]
     fn signing_hash_is_deterministic() {
         let fields = EnvelopeFields {
-            from: "alice.chat.eth",
-            to: "bob.chat.eth",
+            from: "alice.anton.eth",
+            to: "bob.anton.eth",
             kind: "chat.text.v1",
             ts: 1_700_000_000,
             nonce: 1,

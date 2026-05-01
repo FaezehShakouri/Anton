@@ -5,7 +5,7 @@
 //! AXL Go binary expects; serde renames here keep us idiomatic on the
 //! Rust side while emitting the PascalCase JSON the binary reads.
 //!
-//! We intentionally model only the fields Axen actually drives:
+//! We intentionally model only the fields Anton actually drives:
 //! `Peers` (bootstrap list), `PrivateKeyPath` (the PEM derived from the
 //! BIP39 seed), `ListenAddresses` (where the underlay accepts inbound),
 //! and `BridgeListen` (where the local-only HTTP API binds, default
@@ -163,8 +163,8 @@ mod tests {
         let cfg = AxlRuntimeConfig::new(
             paths,
             vec![
-                "tls://bootstrap-1.axen.chat:9001".to_owned(),
-                "tls://bootstrap-2.axen.chat:9001".to_owned(),
+                "tls://bootstrap-1.anton.chat:9001".to_owned(),
+                "tls://bootstrap-2.anton.chat:9001".to_owned(),
             ],
         );
         let nc = cfg.to_node_config();

@@ -1,49 +1,254 @@
-import { useParams } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
+import { useNavigate, useParams } from "react-router-dom";
+import type { ChatMessage } from "@anton/shared-types";
+import { ipc } from "../lib/ipc";
+import { cn } from "../lib/cn";
+
+type Resolved = {
+  ens: string;
+  wallet: string;
+  peerId: string;
+  pubkeyPem: string;
+  avatar?: string;
+  description?: string;
+};
 
 export function ChatPage() {
-  const { ens } = useParams<{ ens: string }>();
+  const { ens: routeEns } = useParams<{ ens: string }>();
+  const navigate = useNavigate();
+
+  const [query, setQuery] = useState("");
+  const [resolved, setResolved] = useState<Resolved | null>(null);
+  const [resolveError, setResolveError] = useState<string | null>(null);
+  const [resolving, setResolving] = useState(false);
+
+  const [sessions, setSessions] = useState<string[]>([]);
+  const [activeEns, setActiveEns] = useState<string | null>(routeEns ?? null);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [draft, setDraft] = useState("");
+  const [sendBusy, setSendBusy] = useState(false);
+
+  const activeNorm = useMemo(
+    () => (activeEns ? activeEns.trim().toLowerCase() : null),
+    [activeEns],
+  );
+
+  const refreshMessages = useCallback(async (ensKey: string) => {
+    const list = await ipc("chat_history", { ens: ensKey });
+    setMessages(list);
+  }, []);
+
+  useEffect(() => {
+    if (routeEns) {
+      const n = routeEns.trim().toLowerCase();
+      setActiveEns(n);
+      setSessions((s) => (s.includes(n) ? s : [...s, n]));
+    }
+  }, [routeEns]);
+
+  useEffect(() => {
+    if (!activeNorm) {
+      setMessages([]);
+      return;
+    }
+    void (async () => {
+      try {
+        await ipc("chat_open", { ens: activeNorm });
+        await refreshMessages(activeNorm);
+      } catch {
+        setMessages([]);
+      }
+    })();
+  }, [activeNorm, refreshMessages]);
+
+  useEffect(() => {
+    const unlisten = listen<{ peer: string; message: ChatMessage }>("chat:message-received", (ev) => {
+      const peer = ev.payload?.peer?.toLowerCase();
+      if (!peer || !activeNorm) return;
+      if (peer === activeNorm || ev.payload.message.from.toLowerCase() === activeNorm) {
+        void refreshMessages(activeNorm);
+      }
+    });
+    return () => {
+      void unlisten.then((u) => u());
+    };
+  }, [activeNorm, refreshMessages]);
+
+  const handleResolve = async () => {
+    const name = query.trim();
+    if (!name) return;
+    setResolving(true);
+    setResolveError(null);
+    setResolved(null);
+    try {
+      const id = await ipc("ens_resolve", { name });
+      setResolved(id as Resolved);
+    } catch (e) {
+      setResolveError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setResolving(false);
+    }
+  };
+
+  const openConversation = async (ens: string) => {
+    const n = ens.trim().toLowerCase();
+    setSessions((s) => (s.includes(n) ? s : [...s, n]));
+    setActiveEns(n);
+    navigate(`/chat/${encodeURIComponent(n)}`);
+    await ipc("chat_open", { ens: n });
+    await refreshMessages(n);
+  };
+
+  const closeConversation = async (ens: string) => {
+    const n = ens.trim().toLowerCase();
+    await ipc("chat_close", { ens: n });
+    setSessions((s) => s.filter((x) => x !== n));
+    if (activeNorm === n) {
+      setActiveEns(null);
+      navigate("/chat");
+      setMessages([]);
+    }
+  };
+
+  const handleSend = async () => {
+    if (!activeNorm || !draft.trim()) return;
+    setSendBusy(true);
+    try {
+      await ipc("chat_send", { to: activeNorm, text: draft.trim() });
+      setDraft("");
+      await refreshMessages(activeNorm);
+    } catch (e) {
+      setResolveError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSendBusy(false);
+    }
+  };
+
   return (
     <div className="grid h-full grid-cols-[18rem_1fr]">
-      <aside className="border-r border-slate-800 bg-slate-950/40">
+      <aside className="flex flex-col border-r border-slate-800 bg-slate-950/40">
         <div className="border-b border-slate-800 p-3">
-          <input
-            type="text"
-            placeholder="alice.chat.eth"
-            className="w-full rounded-md border border-slate-800 bg-slate-900 px-3 py-2 text-sm placeholder:text-slate-500 focus:border-emerald-500 focus:outline-none"
-            disabled
-          />
+          <p className="mb-2 text-xs font-medium text-slate-400">New conversation</p>
+          <div className="flex gap-1">
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && void handleResolve()}
+              placeholder="alice.anton.eth"
+              className="min-w-0 flex-1 rounded-md border border-slate-800 bg-slate-900 px-2 py-1.5 text-xs placeholder:text-slate-500 focus:border-emerald-500 focus:outline-none"
+            />
+            <button
+              type="button"
+              disabled={resolving || !query.trim()}
+              onClick={() => void handleResolve()}
+              className="shrink-0 rounded-md bg-slate-800 px-2 py-1.5 text-xs text-slate-200 hover:bg-slate-700 disabled:opacity-50"
+            >
+              Resolve
+            </button>
+          </div>
+          {resolveError ? <p className="mt-2 text-xs text-red-400">{resolveError}</p> : null}
+          {resolved ? (
+            <div className="mt-3 rounded-md border border-slate-800 bg-slate-900/60 p-2 text-xs">
+              <p className="font-mono text-slate-200">{resolved.ens}</p>
+              <p className="mt-1 break-all text-slate-500">wallet {resolved.wallet}</p>
+              <p className="mt-1 break-all text-slate-500">peer {resolved.peerId}</p>
+              <button
+                type="button"
+                onClick={() => void openConversation(resolved.ens)}
+                className="mt-2 w-full rounded-md bg-emerald-500/90 py-1.5 text-xs font-medium text-emerald-950"
+              >
+                Open chat
+              </button>
+            </div>
+          ) : null}
         </div>
-        <div className="px-3 py-6 text-xs text-slate-500">
-          Conversations open in this session will appear here. Closing one
-          drops it; restarting the app starts the sidebar empty (chat is
-          ephemeral by design).
+        <div className="flex-1 overflow-auto px-2 py-2">
+          <p className="px-1 pb-2 text-[10px] uppercase tracking-wide text-slate-500">This session</p>
+          {sessions.length === 0 ? (
+            <p className="px-2 text-xs text-slate-500">No open conversations.</p>
+          ) : (
+            <ul className="space-y-1">
+              {sessions.map((s) => (
+                <li key={s}>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => void openConversation(s)}
+                      className={cn(
+                        "min-w-0 flex-1 truncate rounded-md px-2 py-1.5 text-left text-xs font-mono",
+                        activeNorm === s ? "bg-slate-800 text-white" : "text-slate-400 hover:bg-slate-900",
+                      )}
+                    >
+                      {s}
+                    </button>
+                    <button
+                      type="button"
+                      title="Close"
+                      onClick={() => void closeConversation(s)}
+                      className="shrink-0 rounded px-1.5 text-xs text-slate-500 hover:bg-slate-900 hover:text-slate-300"
+                    >
+                      ×
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       </aside>
-      <section className="flex flex-col">
+      <section className="flex min-w-0 flex-col">
         <header className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
-          <div className="flex items-center gap-2">
-            <span className="font-mono text-sm">
-              {ens ?? "(no conversation open)"}
+          <div className="flex min-w-0 flex-col gap-1">
+            <span className="truncate font-mono text-sm text-slate-200">
+              {activeNorm ?? "(no conversation open)"}
             </span>
-            {ens && (
-              <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs text-emerald-400">
-                verified by ENS
+            {activeNorm ? (
+              <span className="w-fit rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] text-emerald-400">
+                ENS + wallet signature on receive
               </span>
-            )}
+            ) : null}
           </div>
         </header>
-        <div className="flex flex-1 items-center justify-center text-sm text-slate-500">
-          {ens
-            ? "Message thread will render here once the Rust core is wired up."
-            : "Resolve a *.chat.eth name from the sidebar to start a conversation."}
+        <div className="flex flex-1 flex-col overflow-hidden">
+          <div className="flex-1 space-y-2 overflow-y-auto px-4 py-3">
+            {messages.map((m) => (
+              <div
+                key={m.id}
+                className={cn(
+                  "max-w-[85%] rounded-lg px-3 py-2 text-sm",
+                  m.from.toLowerCase() === activeNorm ? "ml-auto bg-emerald-900/40 text-emerald-50" : "bg-slate-800/80 text-slate-100",
+                )}
+              >
+                <p className="text-xs text-slate-500">
+                  {m.state} · {new Date(Number(m.ts)).toLocaleString()}
+                </p>
+                <p className="mt-1 whitespace-pre-wrap">{m.text}</p>
+              </div>
+            ))}
+          </div>
         </div>
         <footer className="border-t border-slate-800 p-3">
-          <input
-            type="text"
-            placeholder="Message…"
-            className="w-full rounded-md border border-slate-800 bg-slate-900 px-3 py-2 text-sm placeholder:text-slate-500 focus:border-emerald-500 focus:outline-none"
-            disabled
-          />
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && void handleSend()}
+              disabled={!activeNorm || sendBusy}
+              placeholder={activeNorm ? "Message…" : "Open a conversation first"}
+              className="flex-1 rounded-md border border-slate-800 bg-slate-900 px-3 py-2 text-sm placeholder:text-slate-500 focus:border-emerald-500 focus:outline-none disabled:opacity-50"
+            />
+            <button
+              type="button"
+              disabled={!activeNorm || sendBusy || !draft.trim()}
+              onClick={() => void handleSend()}
+              className="rounded-md bg-emerald-500/90 px-4 py-2 text-sm font-medium text-emerald-950 disabled:opacity-50"
+            >
+              Send
+            </button>
+          </div>
         </footer>
       </section>
     </div>

@@ -17,12 +17,12 @@
 //! ```
 
 use ed25519_dalek::SigningKey;
-use pkcs8::{EncodePrivateKey, LineEnding};
+use pkcs8::{EncodePrivateKey, EncodePublicKey, LineEnding};
 use hmac::{Hmac, Mac};
 use sha2::Sha512;
 use zeroize::{Zeroize, Zeroizing};
 
-use crate::error::{AxenError, Result};
+use crate::error::{AntonError, Result};
 
 /// Coin type 501 is SLIP-0044's "Solana / generic ed25519". We follow that
 /// convention because the canonical SLIP-0010 path for ed25519 ecosystems
@@ -54,7 +54,7 @@ impl std::fmt::Debug for Ed25519Identity {
 }
 
 impl Ed25519Identity {
-    /// Derive the canonical Axen AXL identity (`m/44'/501'/0'/0'`).
+    /// Derive the canonical Anton AXL identity (`m/44'/501'/0'/0'`).
     pub fn from_seed(seed: &[u8; 64]) -> Result<Self> {
         Self::from_seed_path(seed, ED25519_DERIVATION_PATH)
     }
@@ -65,7 +65,7 @@ impl Ed25519Identity {
         let (mut k, mut c) = master_key(seed)?;
         for &index in path {
             if index < HARDENED_OFFSET {
-                return Err(AxenError::InvalidDerivationPath);
+                return Err(AntonError::InvalidDerivationPath);
             }
             (k, c) = derive_child(&c, &k, index)?;
         }
@@ -97,12 +97,21 @@ impl Ed25519Identity {
     pub fn to_pkcs8_pem(&self) -> Result<Zeroizing<String>> {
         self.signing_key
             .to_pkcs8_pem(LineEnding::LF)
-            .map_err(|_| AxenError::Ed25519PemEncoding)
+            .map_err(|_| AntonError::Ed25519PemEncoding)
+    }
+
+    /// SPKI PEM for the ed25519 **public** key (`BEGIN PUBLIC KEY`), suitable for the on-chain
+    /// `axl_pubkey` text record passed to `registerWithRecords`.
+    pub fn to_public_pkcs8_pem(&self) -> Result<String> {
+        self.signing_key
+            .verifying_key()
+            .to_public_key_pem(LineEnding::LF)
+            .map_err(|_| AntonError::Ed25519PemEncoding)
     }
 }
 
 fn master_key(seed: &[u8; 64]) -> Result<([u8; 32], [u8; 32])> {
-    let mut mac = HmacSha512::new_from_slice(SLIP10_KEY).map_err(|_| AxenError::InvalidDerivationPath)?;
+    let mut mac = HmacSha512::new_from_slice(SLIP10_KEY).map_err(|_| AntonError::InvalidDerivationPath)?;
     mac.update(seed);
     let bytes = mac.finalize().into_bytes();
     let mut k = [0u8; 32];
@@ -119,7 +128,7 @@ fn derive_child(parent_c: &[u8; 32], parent_k: &[u8; 32], index: u32) -> Result<
     data[1..33].copy_from_slice(parent_k);
     data[33..37].copy_from_slice(&index.to_be_bytes());
 
-    let mut mac = HmacSha512::new_from_slice(parent_c).map_err(|_| AxenError::InvalidDerivationPath)?;
+    let mut mac = HmacSha512::new_from_slice(parent_c).map_err(|_| AntonError::InvalidDerivationPath)?;
     mac.update(&data);
     let bytes = mac.finalize().into_bytes();
     let mut k = [0u8; 32];
@@ -169,7 +178,7 @@ mod tests {
         let seed = [0x42u8; 64];
         let bad_path = &[44u32 | HARDENED_OFFSET, 0]; // second index is non-hardened
         let err = Ed25519Identity::from_seed_path(&seed, bad_path).unwrap_err();
-        assert!(matches!(err, AxenError::InvalidDerivationPath));
+        assert!(matches!(err, AntonError::InvalidDerivationPath));
     }
 
     #[test]
@@ -179,6 +188,15 @@ mod tests {
         let pem = id.to_pkcs8_pem().unwrap();
         assert!(pem.starts_with("-----BEGIN PRIVATE KEY-----"));
         assert!(pem.trim_end().ends_with("-----END PRIVATE KEY-----"));
+    }
+
+    #[test]
+    fn public_spki_pem_has_correct_headers() {
+        let seed = [0x33u8; 64];
+        let id = Ed25519Identity::from_seed(&seed).unwrap();
+        let pem = id.to_public_pkcs8_pem().unwrap();
+        assert!(pem.contains("BEGIN PUBLIC KEY"));
+        assert!(pem.contains("END PUBLIC KEY"));
     }
 
     #[test]

@@ -30,7 +30,7 @@ use zeroize::{Zeroize, Zeroizing};
 
 use crate::crypto::kdf::{derive_aead_key, KdfParams};
 use crate::crypto::mnemonic::MnemonicPhrase;
-use crate::error::{AxenError, Result};
+use crate::error::{AntonError, Result};
 
 pub const VAULT_MAGIC: &[u8; 4] = b"AXEN";
 pub const VAULT_VERSION: u8 = 1;
@@ -140,7 +140,7 @@ impl Vault {
         OsRng.fill_bytes(&mut nonce_bytes);
 
         let key = derive_aead_key(passphrase, &salt, params)?;
-        let cipher = XChaCha20Poly1305::new_from_slice(key.as_slice()).map_err(|_| AxenError::AeadEncrypt)?;
+        let cipher = XChaCha20Poly1305::new_from_slice(key.as_slice()).map_err(|_| AntonError::AeadEncrypt)?;
 
         let plaintext = serde_json::to_vec(&*self.payload)?;
         let aad = aad_bytes(&salt, &nonce_bytes, params);
@@ -152,7 +152,7 @@ impl Vault {
                     aad: &aad,
                 },
             )
-            .map_err(|_| AxenError::AeadEncrypt)?;
+            .map_err(|_| AntonError::AeadEncrypt)?;
 
         let mut out = Vec::with_capacity(62 + ciphertext.len());
         out.extend_from_slice(VAULT_MAGIC);
@@ -163,7 +163,7 @@ impl Vault {
         out.extend_from_slice(&params.p_cost.to_le_bytes());
         out.extend_from_slice(&salt);
         out.extend_from_slice(&nonce_bytes);
-        out.extend_from_slice(&u32::try_from(ciphertext.len()).map_err(|_| AxenError::AeadEncrypt)?.to_le_bytes());
+        out.extend_from_slice(&u32::try_from(ciphertext.len()).map_err(|_| AntonError::AeadEncrypt)?.to_le_bytes());
         out.extend_from_slice(&ciphertext);
         Ok(out)
     }
@@ -173,7 +173,7 @@ impl Vault {
         let header = parse_header(bytes)?;
 
         let key = derive_aead_key(passphrase, &header.salt, header.params)?;
-        let cipher = XChaCha20Poly1305::new_from_slice(key.as_slice()).map_err(|_| AxenError::AeadDecrypt)?;
+        let cipher = XChaCha20Poly1305::new_from_slice(key.as_slice()).map_err(|_| AntonError::AeadDecrypt)?;
 
         let aad = aad_bytes(&header.salt, &header.nonce, header.params);
         let plaintext = cipher
@@ -184,9 +184,9 @@ impl Vault {
                     aad: &aad,
                 },
             )
-            .map_err(|_| AxenError::VaultDecryptionFailed)?;
+            .map_err(|_| AntonError::VaultDecryptionFailed)?;
 
-        let payload: VaultPayload = serde_json::from_slice(&plaintext).map_err(AxenError::Json)?;
+        let payload: VaultPayload = serde_json::from_slice(&plaintext).map_err(AntonError::Json)?;
         // Validate that what we decrypted is actually a BIP39 mnemonic
         // — gives a clearer error if someone hands us a bogus blob with a
         // valid AEAD tag (shouldn't happen, but defense-in-depth).
@@ -207,26 +207,26 @@ struct Header<'a> {
 
 fn parse_header(bytes: &[u8]) -> Result<Header<'_>> {
     if bytes.len() < 4 + 1 + 1 + 4 + 4 + 4 + 16 + 24 + 4 {
-        return Err(AxenError::VaultTruncated);
+        return Err(AntonError::VaultTruncated);
     }
 
     let mut cursor = 0;
     let magic = &bytes[cursor..cursor + 4];
     cursor += 4;
     if magic != VAULT_MAGIC {
-        return Err(AxenError::VaultBadMagic);
+        return Err(AntonError::VaultBadMagic);
     }
 
     let version = bytes[cursor];
     cursor += 1;
     if version != VAULT_VERSION {
-        return Err(AxenError::VaultUnsupportedVersion(version));
+        return Err(AntonError::VaultUnsupportedVersion(version));
     }
 
     let kdf_id = bytes[cursor];
     cursor += 1;
     if kdf_id != KDF_ID_ARGON2ID {
-        return Err(AxenError::VaultUnsupportedKdf(kdf_id));
+        return Err(AntonError::VaultUnsupportedKdf(kdf_id));
     }
 
     let m_cost = read_u32_le(bytes, &mut cursor);
@@ -243,7 +243,7 @@ fn parse_header(bytes: &[u8]) -> Result<Header<'_>> {
 
     let ct_len = read_u32_le(bytes, &mut cursor) as usize;
     if bytes.len() < cursor + ct_len {
-        return Err(AxenError::VaultTruncated);
+        return Err(AntonError::VaultTruncated);
     }
     let ciphertext = &bytes[cursor..cursor + ct_len];
 
@@ -364,7 +364,7 @@ mod tests {
         let vault = Vault::new(&m, None);
         let bytes = vault.encode("hunter2", cheap_params()).unwrap();
         let err = Vault::decode(&bytes, "wrong").unwrap_err();
-        assert!(matches!(err, AxenError::VaultDecryptionFailed));
+        assert!(matches!(err, AntonError::VaultDecryptionFailed));
     }
 
     #[test]
@@ -377,7 +377,7 @@ mod tests {
         let salt_offset = 4 + 1 + 1 + 4 + 4 + 4;
         bytes[salt_offset] ^= 0x01;
         let err = Vault::decode(&bytes, "hunter2").unwrap_err();
-        assert!(matches!(err, AxenError::VaultDecryptionFailed));
+        assert!(matches!(err, AntonError::VaultDecryptionFailed));
     }
 
     #[test]
@@ -386,7 +386,7 @@ mod tests {
         bytes[..4].copy_from_slice(b"NOPE");
         assert!(matches!(
             Vault::decode(&bytes, "x").unwrap_err(),
-            AxenError::VaultBadMagic
+            AntonError::VaultBadMagic
         ));
     }
 
@@ -395,7 +395,7 @@ mod tests {
         let bytes = vec![b'A', b'X', b'E', b'N', 1, 1];
         assert!(matches!(
             Vault::decode(&bytes, "x").unwrap_err(),
-            AxenError::VaultTruncated
+            AntonError::VaultTruncated
         ));
     }
 

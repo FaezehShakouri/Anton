@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 #[derive(Debug, Error)]
-pub enum AxenError {
+pub enum AntonError {
     #[error("invalid BIP39 mnemonic")]
     InvalidMnemonic,
 
@@ -11,7 +11,7 @@ pub enum AxenError {
     #[error("BIP32 derivation failed")]
     Bip32Derivation,
 
-    #[error("vault: bad magic header (file is not an Axen vault)")]
+    #[error("vault: bad magic header (file is not an Anton vault)")]
     VaultBadMagic,
 
     #[error("vault: unsupported version {0}")]
@@ -82,11 +82,32 @@ pub enum AxenError {
     #[error("json: {0}")]
     Json(#[from] serde_json::Error),
 
+    #[error("invalid envelope body encoding ({0})")]
+    InvalidEnvelopeBody(String),
+
+    #[error("invalid signature hex encoding")]
+    InvalidSignatureEncoding,
+
+    #[error("identity mismatch: transport peer id ≠ ENS axl_peer_id for {0}")]
+    DualIdentityPeerMismatch(String),
+
+    #[error("replay or stale nonce from {from}: nonce {got} must be > {last}")]
+    DuplicateNonce { from: String, got: u64, last: u64 },
+
+    #[error("unknown envelope kind {0}")]
+    UnknownEnvelopeKind(String),
+
+    #[error("invalid resolved identity wire: {0}")]
+    InvalidResolvedIdentityWire(String),
+
     #[error("http: {0}")]
     Http(#[from] reqwest::Error),
+
+    #[error("not implemented: {0}")]
+    NotImplemented(String),
 
     #[error(transparent)]
     Other(#[from] anyhow::Error),
 }
 
-pub type Result<T, E = AxenError> = std::result::Result<T, E>;
+pub type Result<T, E = AntonError> = std::result::Result<T, E>;

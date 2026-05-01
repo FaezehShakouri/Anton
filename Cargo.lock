@@ -64,6 +64,8 @@ dependencies = [
  "alloy-rpc-client",
  "alloy-rpc-types",
  "alloy-serde",
+ "alloy-signer",
+ "alloy-signer-local",
  "alloy-transport",
  "alloy-transport-http",
  "alloy-trie",
@@ -513,6 +515,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "alloy-signer-local"
+version = "2.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bef839e7ce9b59aa60fa9a175e97986c6145c888d643b0f1fb0a3e7b8e56a2e2"
+dependencies = [
+ "alloy-consensus",
+ "alloy-network",
+ "alloy-primitives",
+ "alloy-signer",
+ "async-trait",
+ "k256",
+ "rand 0.8.6",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "alloy-sol-macro"
 version = "1.5.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -659,6 +677,76 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "819e7219dbd41043ac279b19830f2efc897156490d7fd6ea916720117ee66311"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "anton-agent"
+version = "0.0.0"
+dependencies = [
+ "anton-core",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "anton-core"
+version = "0.0.0"
+dependencies = [
+ "alloy",
+ "alloy-primitives",
+ "alloy-sol-types",
+ "anyhow",
+ "argon2",
+ "async-trait",
+ "bip32",
+ "bip39",
+ "bytes",
+ "chacha20poly1305",
+ "ed25519-dalek",
+ "futures-core",
+ "futures-util",
+ "hex",
+ "hex-literal",
+ "hmac",
+ "k256",
+ "moka",
+ "pkcs8",
+ "rand_core 0.6.4",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tiny-keccak",
+ "tokio",
+ "tracing",
+ "wiremock",
+ "zeroize",
+]
+
+[[package]]
+name = "anton-desktop"
+version = "0.0.0"
+dependencies = [
+ "alloy",
+ "alloy-primitives",
+ "anton-core",
+ "anyhow",
+ "futures-util",
+ "hex",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-shell",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]
@@ -983,62 +1071,6 @@ dependencies = [
  "cmake",
  "dunce",
  "fs_extra",
-]
-
-[[package]]
-name = "axen-core"
-version = "0.0.0"
-dependencies = [
- "alloy",
- "alloy-primitives",
- "alloy-sol-types",
- "anyhow",
- "argon2",
- "async-trait",
- "bip32",
- "bip39",
- "bytes",
- "chacha20poly1305",
- "ed25519-dalek",
- "futures-core",
- "futures-util",
- "hex",
- "hex-literal",
- "hmac",
- "k256",
- "moka",
- "pkcs8",
- "rand_core 0.6.4",
- "reqwest",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "thiserror 2.0.18",
- "tiny-keccak",
- "tokio",
- "tracing",
- "wiremock",
- "zeroize",
-]
-
-[[package]]
-name = "axen-desktop"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "axen-core",
- "futures-util",
- "parking_lot",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-shell",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]

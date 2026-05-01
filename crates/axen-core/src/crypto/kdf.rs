@@ -1,4 +1,4 @@
-//! Argon2id KDF wrapper for the Axen vault.
+//! Argon2id KDF wrapper for the Anton vault.
 //!
 //! The defaults are the parameters the design plan calls out:
 //! `m = 64 MiB, t = 3, p = 1`. They're encoded into each vault file so
@@ -7,7 +7,7 @@
 use argon2::{Algorithm, Argon2, Params, Version};
 use zeroize::Zeroizing;
 
-use crate::error::{AxenError, Result};
+use crate::error::{AntonError, Result};
 
 /// Argon2id parameters persisted alongside a vault.
 ///
@@ -40,13 +40,13 @@ pub fn derive_aead_key(
     params: KdfParams,
 ) -> Result<Zeroizing<[u8; 32]>> {
     let argon_params =
-        Params::new(params.m_cost, params.t_cost, params.p_cost, Some(32)).map_err(|_| AxenError::KdfFailed)?;
+        Params::new(params.m_cost, params.t_cost, params.p_cost, Some(32)).map_err(|_| AntonError::KdfFailed)?;
     let argon = Argon2::new(Algorithm::Argon2id, Version::V0x13, argon_params);
 
     let mut out = Zeroizing::new([0u8; 32]);
     argon
         .hash_password_into(passphrase.as_bytes(), salt, out.as_mut_slice())
-        .map_err(|_| AxenError::KdfFailed)?;
+        .map_err(|_| AntonError::KdfFailed)?;
     Ok(out)
 }
 

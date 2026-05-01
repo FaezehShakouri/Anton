@@ -1,6 +1,6 @@
 //! Generic transport trait + value types.
 //!
-//! `Transport` is the only seam Axen exposes to the rest of the system
+//! `Transport` is the only seam Anton exposes to the rest of the system
 //! for moving bytes between peers. The default impl in [`crate::axl`]
 //! talks to a local AXL sidecar over HTTP, but anything that can route a
 //! payload addressed to a peer ID — a mock for tests, a libp2p relay, an
@@ -14,7 +14,7 @@ use bytes::Bytes;
 use futures_core::Stream;
 use serde::{Deserialize, Serialize};
 
-use crate::error::{AxenError, Result};
+use crate::error::{AntonError, Result};
 
 /// 32-byte ed25519 public key — the AXL routing address.
 ///
@@ -43,9 +43,9 @@ impl PeerId {
     /// Parse a `0x…`/`…` lowercase or mixed-case hex peer id.
     pub fn from_hex(s: &str) -> Result<Self> {
         let trimmed = s.strip_prefix("0x").unwrap_or(s);
-        let raw = hex::decode(trimmed).map_err(|_| AxenError::InvalidPeerId(s.to_owned()))?;
+        let raw = hex::decode(trimmed).map_err(|_| AntonError::InvalidPeerId(s.to_owned()))?;
         if raw.len() != Self::LEN {
-            return Err(AxenError::InvalidPeerId(s.to_owned()));
+            return Err(AntonError::InvalidPeerId(s.to_owned()));
         }
         let mut out = [0u8; 32];
         out.copy_from_slice(&raw);
@@ -98,7 +98,7 @@ pub struct Topology {
     /// Bootstrap peers we're configured to dial.
     #[serde(default)]
     pub bootstrap_peers: Vec<String>,
-    /// Currently connected peer count (via the underlay mesh, not Axen-aware).
+    /// Currently connected peer count (via the underlay mesh, not Anton-aware).
     #[serde(default)]
     pub connected_peers: u32,
     /// Optional debugging field — varies between AXL versions.
@@ -153,7 +153,7 @@ mod tests {
     fn peer_id_rejects_wrong_length() {
         assert!(matches!(
             PeerId::from_hex("0x1234").unwrap_err(),
-            AxenError::InvalidPeerId(_)
+            AntonError::InvalidPeerId(_)
         ));
     }
 

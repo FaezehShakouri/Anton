@@ -13,7 +13,7 @@ export default function App() {
       <header className="flex h-12 shrink-0 items-center justify-between border-b border-slate-800 bg-slate-950/80 px-4 backdrop-blur">
         <div className="flex items-center gap-2">
           <div className="size-2 rounded-full bg-emerald-400" aria-hidden />
-          <span className="font-semibold tracking-tight">Axen</span>
+          <span className="font-semibold tracking-tight">Anton</span>
           <span className="text-xs text-slate-500">v0.0.0 — scaffold</span>
         </div>
         <nav className="flex gap-1 text-sm">

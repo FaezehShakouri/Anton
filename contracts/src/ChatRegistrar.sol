@@ -7,7 +7,7 @@ import {IL2Registry} from "durin/src/interfaces/IL2Registry.sol";
 import {Hex} from "./libraries/Hex.sol";
 
 /// @title ChatRegistrar
-/// @notice Durin L2 registrar controller for `*.chat.eth` that registers a subname and,
+/// @notice Durin L2 registrar controller for `*.anton.eth` that registers a subname and,
 ///         in one transaction, sets `addr` for the deployment chain + coin type 60,
 ///         plus text records `axl_peer_id` (hex 32-byte ed25519 pubkey) and `axl_pubkey`
 ///         (PEM). Mirrors Durin's example `L2Registrar.register` ordering (pre-seed resolver
@@ -20,7 +20,7 @@ contract ChatRegistrar is L2Registrar {
 
     constructor(address registry_) L2Registrar(registry_) {}
 
-    /// @param label Plain label under `chat.eth` (e.g. `"alice"` for `alice.chat.eth`).
+    /// @param label Plain label under `anton.eth` (e.g. `"alice"` for `alice.anton.eth`).
     /// @param owner_ Address that will own the ERC721 subname and receive `addr` records.
     /// @param peerId Raw 32-byte ed25519 public key bytes (encoded as `0x…` hex in `axl_peer_id`).
     /// @param pubkeyPem PEM-encoded public key string stored under `axl_pubkey`.

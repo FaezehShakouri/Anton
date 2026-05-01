@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default capabilities granted to the main Axen window.",
+  "description": "Default capabilities granted to the main Anton window.",
   "windows": ["main"],
   "permissions": [
     "core:default",

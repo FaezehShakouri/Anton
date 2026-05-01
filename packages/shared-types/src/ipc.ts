@@ -1,50 +1,81 @@
-import type { ChatMessage } from "./envelope";
-import type { EnsName, Identity } from "./identity";
+import type { ChatMessage, WireEnvelope } from "./envelope";
+import type { EnsName, Identity, ResolvedIdentityWire } from "./identity";
 
 /**
  * The Tauri IPC surface.
  *
  * Each entry maps a command name to its `args` and `returns` shapes. The
- * desktop frontend uses `ipc(cmd, args)` (see `src/lib/ipc.ts`) to call
- * into the Rust core; the Rust side (under `apps/desktop/src-tauri/src/`)
- * is the source of truth and registers commands matching these names.
- *
- * Commands are wired up in a later scaffold step on top of `crates/axen-core`.
- * The list is intentionally complete here so the UI can consume it
- * type-safely as soon as each command lands.
+ * desktop frontend uses `ipc(cmd, args)` (see `src/lib/ipc.ts`). Rust command
+ * structs use `#[serde(rename_all = "camelCase")]` where applicable so the
+ * wire matches these types.
  */
 export interface TauriCommands {
-  /* App / debug */
   app_version: { args: void; returns: string };
   ping: { args: void; returns: "pong" };
 
-  /* Onboarding + vault */
-  onboarding_create: {
-    args: { passphrase: string; username: string };
-    returns: { mnemonic: string; ens: EnsName };
+  axl_topology: {
+    args: void;
+    returns: {
+      selfPeerId: string;
+      bootstrapPeers: string[];
+      connectedPeers: number;
+    } | null;
   };
-  onboarding_import: {
+
+  onboarding_generate_mnemonic: { args: void; returns: string };
+
+  onboarding_derived_preview: {
+    args: { mnemonic: string };
+    returns: {
+      ethereumAddress: string;
+      peerIdHex: string;
+      pubkeyPem: string;
+    };
+  };
+
+  onboarding_commit_vault: {
     args: { mnemonic: string; passphrase: string };
-    returns: { ens: EnsName | null };
+    returns: {
+      ethereumAddress: string;
+      peerIdHex: string;
+    };
   };
+
+  vault_exists: { args: void; returns: boolean };
+
   unlock_vault: {
     args: { passphrase: string };
     returns: { ens: EnsName | null };
   };
 
-  /* Registration */
-  register_username: {
-    args: { username: string };
-    returns: { txHash: `0x${string}`; ens: EnsName };
+  onboarding_check_username: {
+    args: { label: string };
+    returns: { available: boolean };
   };
 
-  /* ENS */
+  register_username: {
+    args: { label: string };
+    returns: { txHash: string; ens: string };
+  };
+
+  messaging_ingest_verified_inbound: {
+    args: {
+      transportPeerHex: string;
+      resolved: ResolvedIdentityWire;
+      envelope: WireEnvelope;
+    };
+    returns: void;
+  };
+
+  messaging_list_peer_messages: {
+    args: { peer: string };
+    returns: ChatMessage[];
+  };
+
   ens_resolve: {
     args: { name: EnsName };
     returns: Identity;
   };
-
-  /* Chat (in-RAM only — no chat content is persisted) */
   chat_open: {
     args: { ens: EnsName };
     returns: { messages: ChatMessage[] };
@@ -60,5 +91,10 @@ export interface TauriCommands {
   chat_history: {
     args: { ens: EnsName };
     returns: ChatMessage[];
+  };
+
+  settings_set_bootstrap_peers: {
+    args: { peers: string[] };
+    returns: void;
   };
 }

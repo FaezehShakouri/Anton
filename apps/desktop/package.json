@@ -1,21 +1,21 @@
 {
-  "name": "@axen/desktop",
+  "name": "@anton/desktop",
   "version": "0.0.0",
   "private": true,
-  "description": "Axen desktop app — Tauri 2 + React + TypeScript shell.",
+  "description": "Anton desktop app — Tauri 2 + React + TypeScript shell.",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc -b --noEmit",
+    "typecheck": "tsc --noEmit",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build"
   },
   "dependencies": {
-    "@axen/axl-client": "workspace:*",
-    "@axen/shared-types": "workspace:*",
+    "@anton/axl-client": "workspace:*",
+    "@anton/shared-types": "workspace:*",
     "@tauri-apps/api": "^2.11.0",
     "@tauri-apps/plugin-shell": "^2.3.5",
     "clsx": "^2.1.1",

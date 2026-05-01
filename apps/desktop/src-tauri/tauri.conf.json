@@ -1,11 +1,11 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Axen",
+  "productName": "Anton",
   "version": "0.0.0",
-  "identifier": "chat.axen.desktop",
+  "identifier": "eth.anton.desktop",
   "build": {
-    "beforeDevCommand": "pnpm --filter @axen/desktop dev",
-    "beforeBuildCommand": "pnpm --filter @axen/desktop build",
+    "beforeDevCommand": "pnpm --filter @anton/desktop dev",
+    "beforeBuildCommand": "pnpm --filter @anton/desktop build",
     "devUrl": "http://localhost:1420",
     "frontendDist": "../dist"
   },
@@ -13,7 +13,7 @@
     "withGlobalTauri": false,
     "windows": [
       {
-        "title": "Axen",
+        "title": "Anton",
         "width": 1100,
         "height": 720,
         "minWidth": 880,
@@ -31,7 +31,7 @@
     "targets": "all",
     "category": "SocialNetworking",
     "shortDescription": "End-to-end encrypted chat on AXL + ENS.",
-    "longDescription": "Axen is an end-to-end encrypted desktop messenger built on AXL and ENS. Each user is name.chat.eth, identities are derived from a single BIP39 seed, and chat is ephemeral by design — only an encrypted vault and a tiny settings file ever touch disk.",
+    "longDescription": "Anton is an end-to-end encrypted desktop messenger built on AXL and ENS. Each user is name.anton.eth, identities are derived from a single BIP39 seed, and chat is ephemeral by design — only an encrypted vault and a tiny settings file ever touch disk.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

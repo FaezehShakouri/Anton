@@ -14,10 +14,10 @@ importers:
 
   apps/desktop:
     dependencies:
-      '@axen/axl-client':
+      '@anton/axl-client':
         specifier: workspace:*
         version: link:../../packages/axl-client-ts
-      '@axen/shared-types':
+      '@anton/shared-types':
         specifier: workspace:*
         version: link:../../packages/shared-types
       '@tauri-apps/api':

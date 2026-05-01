@@ -1,8 +1,8 @@
 {
-  "name": "@axen/shared-types",
+  "name": "@anton/shared-types",
   "version": "0.0.0",
   "private": true,
-  "description": "TypeScript types shared between the Tauri Rust IPC surface and the Axen UI.",
+  "description": "TypeScript types shared between the Tauri Rust IPC surface and the Anton UI.",
   "type": "module",
   "main": "./src/index.ts",
   "module": "./src/index.ts",

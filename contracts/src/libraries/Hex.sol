@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
-/// @notice Lowercase hex encoding with `0x` prefix (matches Axen Rust `peer_id_hex`).
+/// @notice Lowercase hex encoding with `0x` prefix (matches Anton Rust `peer_id_hex`).
 library Hex {
     function bytesToHexPrefixed(bytes memory data) internal pure returns (string memory) {
         bytes memory alphabet = "0123456789abcdef";

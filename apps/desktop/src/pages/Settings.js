@@ -1,0 +1,8 @@
+import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
+export function SettingsPage() {
+    return (_jsxs("div", { className: "mx-auto max-w-2xl px-6 py-10", children: [_jsx("h1", { className: "text-2xl font-semibold tracking-tight", children: "Settings" }), _jsxs("p", { className: "mt-2 text-sm text-slate-400", children: ["Theme, last-used username, and advanced bootstrap-peer overrides will live here. None of these contain chat content \u2014 they're written to", _jsx("code", { className: "font-mono", children: " settings.json" }), " in the app data dir."] }), _jsxs("div", { className: "mt-8 space-y-4", children: [_jsx(SettingsCard, { title: "Identity", children: _jsx("p", { className: "text-xs text-slate-500", children: "Change passphrase and export mnemonic \u2014 both gated by re-auth." }) }), _jsx(SettingsCard, { title: "Network", children: _jsxs("p", { className: "text-xs text-slate-500", children: ["Bundled ", _jsx("code", { className: "font-mono", children: "axl" }), " sidecar status, advanced bootstrap-peer overrides, and topology debug."] }) }), _jsx(SettingsCard, { title: "Privacy", children: _jsx("p", { className: "text-xs text-slate-500", children: "Chat is ephemeral by design \u2014 nothing on this page persists chat content, contacts, or message metadata to disk." }) })] })] }));
+}
+function SettingsCard({ title, children, }) {
+    return (_jsxs("section", { className: "rounded-lg border border-slate-800 bg-slate-900/40 p-4", children: [_jsx("h2", { className: "text-sm font-medium text-slate-200", children: title }), _jsx("div", { className: "mt-2", children: children })] }));
+}
+//# sourceMappingURL=Settings.js.map

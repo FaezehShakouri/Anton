@@ -2,9 +2,12 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "composite": true,
+    "noEmit": false,
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "types": ["node"],
+    "outDir": "./node_modules/.cache/tsconfig-node",
+    "rootDir": "."
   },
   "include": ["vite.config.ts"]
 }

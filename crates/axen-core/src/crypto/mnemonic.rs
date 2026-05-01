@@ -10,7 +10,7 @@ use bip39::{Language, Mnemonic};
 use rand_core::{OsRng, RngCore};
 use zeroize::{Zeroize, Zeroizing};
 
-use crate::error::{AxenError, Result};
+use crate::error::{AntonError, Result};
 
 /// A wrapped BIP39 phrase whose backing buffer is wiped on drop.
 #[derive(Clone)]
@@ -34,7 +34,7 @@ impl MnemonicPhrase {
         let mut entropy = vec![0u8; entropy_bytes];
         OsRng.fill_bytes(&mut entropy);
         let mnemonic = Mnemonic::from_entropy_in(Language::English, &entropy)
-            .map_err(|_| AxenError::InvalidMnemonic)?;
+            .map_err(|_| AntonError::InvalidMnemonic)?;
         // Wipe the entropy buffer ASAP — the mnemonic phrase encodes it.
         entropy.zeroize();
         Ok(Self::from_mnemonic(mnemonic, word_count))
@@ -46,7 +46,7 @@ impl MnemonicPhrase {
     pub fn parse(phrase: &str) -> Result<Self> {
         let trimmed = phrase.trim();
         let mnemonic = Mnemonic::parse_in_normalized(Language::English, trimmed)
-            .map_err(|_| AxenError::InvalidMnemonic)?;
+            .map_err(|_| AntonError::InvalidMnemonic)?;
         let word_count = mnemonic.word_count();
         Ok(Self::from_mnemonic(mnemonic, word_count))
     }
@@ -88,7 +88,7 @@ fn entropy_bytes_for(word_count: usize) -> Result<usize> {
         18 => Ok(24),
         21 => Ok(28),
         24 => Ok(32),
-        _ => Err(AxenError::InvalidMnemonic),
+        _ => Err(AntonError::InvalidMnemonic),
     }
 }
 

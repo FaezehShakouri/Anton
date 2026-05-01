@@ -1,5 +1,5 @@
 {
-  "name": "@axen/axl-client",
+  "name": "@anton/axl-client",
   "version": "0.0.0",
   "private": true,
   "description": "Reusable TypeScript client for the AXL HTTP bridge (127.0.0.1:9002).",

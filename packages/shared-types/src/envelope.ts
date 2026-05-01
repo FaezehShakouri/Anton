@@ -17,7 +17,7 @@ export type EnvelopeKind =
   | (string & {});
 
 /**
- * Wire format for messages flowing through AXL between Axen peers.
+ * Wire format for messages flowing through AXL between Anton peers.
  *
  * `body` is opaque (per-`kind`) bytes — usually a MessagePack-encoded
  * payload defined per handler. The envelope itself is signed with the
@@ -59,4 +59,15 @@ export interface ChatMessage {
   text: string;
   ts: number;
   state: MessageState;
+}
+
+/** IPC JSON envelope + hex signature (`camelCase`); mirrors Rust `WireEnvelope`. */
+export interface WireEnvelope {
+  from: string;
+  to: string;
+  kind: EnvelopeKind | string;
+  ts: number;
+  nonce: number;
+  body: unknown;
+  sig: `0x${string}`;
 }

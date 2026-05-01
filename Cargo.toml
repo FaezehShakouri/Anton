@@ -1,21 +1,21 @@
 [workspace]
 resolver = "2"
 members = [
+    "apps/agent",
     "apps/desktop/src-tauri",
     "crates/axen-core",
 ]
 
-# Future members (added by later scaffold steps):
-#   "apps/agent"
-#   "crates/axen-zerog"
-#   "crates/axen-inference"
+# Future members:
+#   "crates/anton-zerog"
+#   "crates/anton-inference"
 
 [workspace.package]
 edition = "2021"
 rust-version = "1.91"
-authors = ["Axen Team"]
+authors = ["Anton Team"]
 license = "MIT"
-repository = "https://github.com/axen-chat/axen"
+repository = "https://github.com/anton-chat/anton"
 
 [workspace.dependencies]
 anyhow = "1"

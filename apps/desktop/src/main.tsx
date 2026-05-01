@@ -1,10 +1,10 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { createBrowserRouter, RouterProvider, Navigate } from "react-router-dom";
-import App from "./App";
-import { OnboardingPage } from "./pages/Onboarding";
-import { ChatPage } from "./pages/Chat";
-import { SettingsPage } from "./pages/Settings";
+import App from "./App.tsx";
+import { OnboardingPage } from "./pages/Onboarding.tsx";
+import { ChatPage } from "./pages/Chat.tsx";
+import { SettingsPage } from "./pages/Settings.tsx";
 import "./styles.css";
 
 const router = createBrowserRouter([

@@ -48,7 +48,7 @@ pnpm-debug.log*
 *.pem
 !apps/desktop/src-tauri/binaries/.gitkeep
 
-# Axen runtime artifacts (must never be committed)
+# Anton runtime artifacts (must never be committed)
 vault.bin
 agent-vault.bin
 settings.json

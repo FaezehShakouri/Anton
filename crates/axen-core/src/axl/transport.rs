@@ -25,7 +25,7 @@ use reqwest::{Client, StatusCode};
 use serde::Deserialize;
 
 use crate::axl::DEFAULT_AXL_BRIDGE_URL;
-use crate::error::{AxenError, Result};
+use crate::error::{AntonError, Result};
 use crate::transport::{Inbound, InboundStream, PeerId, Topology, Transport};
 
 const DESTINATION_HEADER: &str = "X-Destination-Peer-Id";
@@ -95,7 +95,7 @@ impl AxlHttpClient {
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .build()
-            .map_err(AxenError::Http)?;
+            .map_err(AntonError::Http)?;
 
         Ok(Self {
             inner: Arc::new(Inner {
@@ -124,7 +124,7 @@ impl AxlHttpClient {
         headers.insert(
             DESTINATION_HEADER,
             HeaderValue::from_str(&to.to_hex())
-                .map_err(|e| AxenError::Transport(format!("destination header: {e}")))?,
+                .map_err(|e| AntonError::Transport(format!("destination header: {e}")))?,
         );
 
         let res = self
@@ -159,9 +159,9 @@ impl AxlHttpClient {
         let from_header = res
             .headers()
             .get(SOURCE_HEADER)
-            .ok_or(AxenError::AxlMissingHeader(SOURCE_HEADER))?
+            .ok_or(AntonError::AxlMissingHeader(SOURCE_HEADER))?
             .to_str()
-            .map_err(|e| AxenError::Transport(format!("from-header: {e}")))?
+            .map_err(|e| AntonError::Transport(format!("from-header: {e}")))?
             .to_owned();
         let from_peer_id = PeerId::from_hex(&from_header)?;
 
@@ -218,7 +218,7 @@ impl AxlHttpClient {
                 .and_then(|m| m.as_str())
                 .unwrap_or("a2a error")
                 .to_owned();
-            return Err(AxenError::AxlHttp {
+            return Err(AntonError::AxlHttp {
                 status: code as u16,
                 message,
             });
@@ -228,7 +228,7 @@ impl AxlHttpClient {
             .get("result")
             .cloned()
             .unwrap_or(serde_json::Value::Null);
-        serde_json::from_value(result).map_err(AxenError::Json)
+        serde_json::from_value(result).map_err(AntonError::Json)
     }
 }
 
@@ -238,24 +238,187 @@ async fn ensure_2xx(res: reqwest::Response) -> Result<reqwest::Response> {
     }
     let status = res.status().as_u16();
     let message = res.text().await.unwrap_or_default();
-    Err(AxenError::AxlHttp { status, message })
+    Err(AntonError::AxlHttp { status, message })
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 struct RawTopology {
-    #[serde(default)]
+    /// AXL sidecars may emit snake_case, camelCase, or PascalCase; accept
+    /// common variants so the bridge health check matches real binaries.
+    #[serde(
+        default,
+        alias = "SelfPeerId",
+        alias = "selfPeerId",
+        alias = "SelfPeerID"
+    )]
     self_peer_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "BootstrapPeers", alias = "bootstrapPeers")]
     bootstrap_peers: Option<Vec<String>>,
-    #[serde(default)]
+    #[serde(default, alias = "ConnectedPeers", alias = "connectedPeers")]
     connected_peers: Option<u32>,
 }
 
+/// Normalize a 32-byte ed25519 public key hex string to canonical `0x` + 64
+/// lowercase nibbles. Accepts optional `0x` / `0X` prefix and 64 raw hex.
+fn normalize_peer_hex_str(s: &str) -> Option<String> {
+    let t = s.trim();
+    if t.is_empty() {
+        return None;
+    }
+    let hex_part = t
+        .strip_prefix("0x")
+        .or_else(|| t.strip_prefix("0X"))
+        .unwrap_or(t);
+    if hex_part.len() != 64 {
+        return None;
+    }
+    if !hex_part.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(format!("0x{}", hex_part.to_ascii_lowercase()))
+}
+
+fn normalize_json_key(k: &str) -> String {
+    k.chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .map(|c| c.to_ascii_lowercase())
+        .collect()
+}
+
+/// True when a JSON object key (normalized) often denotes "this node's"
+/// ed25519 / routing identity in mesh / bridge payloads.
+fn key_suggests_self_peer_id(norm: &str) -> bool {
+    matches!(
+        norm,
+        "selfpeerid"
+            | "selfid"
+            | "nodeid"
+            | "localpeerid"
+            | "mypublickey"
+            | "publickey"
+            | "public_key"
+            | "pubkey"
+            | "peerid"
+            | "peer_id"
+            | "ed25519publickey"
+            | "signingpublickey"
+            | "signing_public_key"
+            | "nodepublickey"
+            | "node_public_key"
+            | "identity"
+            | "routingkey"
+            | "routing_key"
+            | "routingpublickey"
+    ) || (norm.contains("self") && norm.contains("peer"))
+        || norm.ends_with("publickey")
+        || norm.ends_with("public_key")
+}
+
+/// Depth-first search for a string value under a recognized key name.
+fn topology_self_peer_from_recursive(v: &serde_json::Value, depth: usize) -> Option<String> {
+    const MAX_DEPTH: usize = 14;
+    if depth > MAX_DEPTH {
+        return None;
+    }
+    match v {
+        serde_json::Value::Object(map) => {
+            for (k, val) in map {
+                let norm = normalize_json_key(k);
+                if key_suggests_self_peer_id(&norm) {
+                    if let Some(s) = val.as_str().and_then(normalize_peer_hex_str) {
+                        return Some(s);
+                    }
+                    if let Some(s) = topology_self_peer_from_recursive(val, depth + 1) {
+                        return Some(s);
+                    }
+                }
+            }
+            for val in map.values() {
+                if let Some(s) = topology_self_peer_from_recursive(val, depth + 1) {
+                    return Some(s);
+                }
+            }
+        }
+        serde_json::Value::Array(arr) => {
+            for item in arr {
+                if let Some(s) = topology_self_peer_from_recursive(item, depth + 1) {
+                    return Some(s);
+                }
+            }
+        }
+        _ => {}
+    }
+    None
+}
+
+fn collect_peer_hex_strings(v: &serde_json::Value, out: &mut Vec<String>, depth: usize) {
+    const MAX_DEPTH: usize = 16;
+    if depth > MAX_DEPTH {
+        return;
+    }
+    match v {
+        serde_json::Value::String(s) => {
+            if let Some(n) = normalize_peer_hex_str(s) {
+                out.push(n);
+            }
+        }
+        serde_json::Value::Object(map) => {
+            for val in map.values() {
+                collect_peer_hex_strings(val, out, depth + 1);
+            }
+        }
+        serde_json::Value::Array(arr) => {
+            for item in arr {
+                collect_peer_hex_strings(item, out, depth + 1);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// If the document contains exactly one 32-byte hex string anywhere, treat it
+/// as the peer id (last resort for minimal `/topology` payloads).
+fn topology_unique_hex_fallback(v: &serde_json::Value) -> Option<String> {
+    let mut found = Vec::new();
+    collect_peer_hex_strings(v, &mut found, 0);
+    found.sort();
+    found.dedup();
+    if found.len() == 1 {
+        return Some(found[0].clone());
+    }
+    None
+}
+
 fn parse_topology(raw: serde_json::Value) -> Result<Topology> {
-    let parsed: RawTopology = serde_json::from_value(raw.clone())?;
-    let self_peer_id = parsed
-        .self_peer_id
-        .ok_or_else(|| AxenError::Transport("topology: missing self_peer_id".into()))?;
+    // Some sidecars return a bare JSON string (quoted hex).
+    if let serde_json::Value::String(s) = &raw {
+        if let Some(n) = normalize_peer_hex_str(s) {
+            return Ok(Topology {
+                self_peer_id: PeerId::from_hex(&n)?,
+                bootstrap_peers: Vec::new(),
+                connected_peers: 0,
+                raw: Some(raw),
+            });
+        }
+    }
+
+    let mut parsed: RawTopology = serde_json::from_value(raw.clone()).unwrap_or_default();
+    if let Some(ref s) = parsed.self_peer_id {
+        parsed.self_peer_id = normalize_peer_hex_str(s).or_else(|| Some(s.clone()));
+    }
+    if parsed.self_peer_id.is_none() {
+        parsed.self_peer_id = topology_self_peer_from_recursive(&raw, 0);
+    }
+    if parsed.self_peer_id.is_none() {
+        parsed.self_peer_id = topology_unique_hex_fallback(&raw);
+    }
+    let self_peer_id = parsed.self_peer_id.ok_or_else(|| {
+        AntonError::Transport(
+            "topology: missing peer id (expected self_peer_id / selfPeerId / nested PublicKey, or a single 64-hex string in the JSON)"
+                .into(),
+        )
+    })?;
+    let self_peer_id = normalize_peer_hex_str(&self_peer_id).unwrap_or(self_peer_id);
     Ok(Topology {
         self_peer_id: PeerId::from_hex(&self_peer_id)?,
         bootstrap_peers: parsed.bootstrap_peers.unwrap_or_default(),
@@ -308,7 +471,7 @@ impl Transport for AxlTransport {
                     Ok(Some(inbound)) => return Some((Ok(inbound), client)),
                     Ok(None) => continue,
                     Err(err) => {
-                        tracing::warn!(target: "axen::axl", "recv error: {err}; backing off");
+                        tracing::warn!(target: "anton::axl", "recv error: {err}; backing off");
                         tokio::time::sleep(backoff).await;
                         return Some((Err(err), client));
                     }
@@ -380,7 +543,7 @@ mod tests {
         let transport = AxlTransport::new(client_for(&server));
         let err = transport.send(&peer(1), b"x").await.unwrap_err();
         match err {
-            AxenError::AxlHttp { status, message } => {
+            AntonError::AxlHttp { status, message } => {
                 assert_eq!(status, 503);
                 assert_eq!(message, "overloaded");
             }
@@ -434,7 +597,7 @@ mod tests {
 
         let client = client_for(&server);
         let err = client.recv_once().await.unwrap_err();
-        assert!(matches!(err, AxenError::AxlMissingHeader(SOURCE_HEADER)));
+        assert!(matches!(err, AntonError::AxlMissingHeader(SOURCE_HEADER)));
     }
 
     #[tokio::test]
@@ -496,6 +659,108 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn topology_parses_camel_case_fields() {
+        let server = mock_server().await;
+        let self_id = peer(0x44);
+
+        Mock::given(method("GET"))
+            .and(path("/topology"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "selfPeerId": self_id.to_hex(),
+                "bootstrapPeers": ["tls://y:9001"],
+                "connectedPeers": 2
+            })))
+            .mount(&server)
+            .await;
+
+        let transport = AxlTransport::new(client_for(&server));
+        let topo = transport.topology().await.unwrap();
+        assert_eq!(topo.self_peer_id, self_id);
+        assert_eq!(topo.bootstrap_peers, vec!["tls://y:9001"]);
+        assert_eq!(topo.connected_peers, 2);
+    }
+
+    #[tokio::test]
+    async fn topology_parses_pascal_case_fields() {
+        let server = mock_server().await;
+        let self_id = peer(0x55);
+
+        Mock::given(method("GET"))
+            .and(path("/topology"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "SelfPeerId": self_id.to_hex(),
+                "BootstrapPeers": ["tls://z:9001"],
+                "ConnectedPeers": 7
+            })))
+            .mount(&server)
+            .await;
+
+        let transport = AxlTransport::new(client_for(&server));
+        let topo = transport.topology().await.unwrap();
+        assert_eq!(topo.self_peer_id, self_id);
+        assert_eq!(topo.bootstrap_peers, vec!["tls://z:9001"]);
+        assert_eq!(topo.connected_peers, 7);
+    }
+
+    #[tokio::test]
+    async fn topology_parses_nested_public_key() {
+        let server = mock_server().await;
+        let self_id = peer(0x66);
+        let hex64 = self_id.to_hex().strip_prefix("0x").unwrap().to_string();
+
+        Mock::given(method("GET"))
+            .and(path("/topology"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "mesh": {
+                    "PublicKey": hex64
+                },
+                "bootstrap_peers": []
+            })))
+            .mount(&server)
+            .await;
+
+        let transport = AxlTransport::new(client_for(&server));
+        let topo = transport.topology().await.unwrap();
+        assert_eq!(topo.self_peer_id, self_id);
+    }
+
+    #[tokio::test]
+    async fn topology_parses_root_json_string_hex() {
+        let server = mock_server().await;
+        let self_id = peer(0x77);
+        let body = format!("\"{}\"", self_id.to_hex());
+
+        Mock::given(method("GET"))
+            .and(path("/topology"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json; charset=utf-8"))
+            .mount(&server)
+            .await;
+
+        let transport = AxlTransport::new(client_for(&server));
+        let topo = transport.topology().await.unwrap();
+        assert_eq!(topo.self_peer_id, self_id);
+    }
+
+    #[tokio::test]
+    async fn topology_unique_hex_fallback_single_field() {
+        let server = mock_server().await;
+        let self_id = peer(0x88);
+
+        Mock::given(method("GET"))
+            .and(path("/topology"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "ok": true,
+                "id": self_id.to_hex()
+            })))
+            .mount(&server)
+            .await;
+
+        let transport = AxlTransport::new(client_for(&server));
+        let topo = transport.topology().await.unwrap();
+        assert_eq!(topo.self_peer_id, self_id);
+    }
+
+    #[tokio::test]
     async fn a2a_call_returns_decoded_result() {
         let server = mock_server().await;
         let target = peer(0x99);
@@ -546,7 +811,7 @@ mod tests {
             .await
             .unwrap_err();
         match err {
-            AxenError::AxlHttp { message, .. } => assert_eq!(message, "method not found"),
+            AntonError::AxlHttp { message, .. } => assert_eq!(message, "method not found"),
             _ => panic!("unexpected error: {err}"),
         }
     }

@@ -1,5 +1,5 @@
 {
-  "name": "axen",
+  "name": "anton",
   "version": "0.0.0",
   "private": true,
   "description": "End-to-end encrypted chat on AXL + ENS, with an agent runtime backed by 0G Storage.",
@@ -9,11 +9,11 @@
     "node": ">=20.10.0"
   },
   "scripts": {
-    "dev": "pnpm --filter @axen/desktop dev",
+    "dev": "pnpm --filter @anton/desktop dev",
     "build": "pnpm -r build",
     "lint": "pnpm -r lint",
     "typecheck": "pnpm -r typecheck",
-    "tauri": "pnpm --filter @axen/desktop tauri",
+    "tauri": "pnpm --filter @anton/desktop tauri",
     "contracts:build": "cd contracts && forge build",
     "contracts:test": "cd contracts && forge test"
   },

@@ -1,17 +1,17 @@
-# Axen
+# Anton
 
 **End-to-end encrypted chat on AXL + ENS, with an agent runtime backed by 0G Storage.**
 
-Axen is a desktop messenger where every user is `name.chat.eth`. ENS text records publish each user's AXL peer identity, so any client can resolve a username and start an encrypted P2P conversation — no servers, no contact list, no chat history written to disk. The same primitives (BIP39 seed → wallet + AXL key → ENS subname) extend cleanly to AI agents, which are headless processes that own their own subname (`oracle.chat.eth`), expose A2A skills over AXL, and persist memory to 0G Storage with the latest root pinned to ENS.
+Anton is a desktop messenger where every user is `name.anton.eth`. ENS text records publish each user's AXL peer identity, so any client can resolve a username and start an encrypted P2P conversation — no servers, no contact list, no chat history written to disk. The same primitives (BIP39 seed → wallet + AXL key → ENS subname) extend cleanly to AI agents, which are headless processes that own their own subname (`oracle.anton.eth`), expose A2A skills over AXL, and persist memory to 0G Storage with the latest root pinned to ENS.
 
 ## What's in here
 
-- [`apps/desktop`](apps/desktop) — Tauri 2 + React + TypeScript desktop app. The Rust core (under `src-tauri/`) wraps `crates/axen-core` once that lands; the React UI ships the Onboarding / Chat / Settings pages.
-- [`apps/agent`](apps/agent) *(coming soon)* — `axen-agent`, a headless runtime that reuses the same Rust core and persists memory to 0G Storage.
-- [`contracts`](contracts) — Foundry workspace housing `ChatRegistrar.sol`, the Durin-derived L2 registrar that mints `*.chat.eth` subnames with `addr`, `axl_peer_id`, and `axl_pubkey` text records in a single transaction. Deployed to Base Sepolia for the demo, Base for production.
+- [`apps/desktop`](apps/desktop) — Tauri 2 + React + TypeScript desktop app. The Rust shell under `src-tauri/` wraps [`crates/axen-core`](crates/axen-core) for crypto, ENS, messaging, and AXL transport. UI: Onboarding, Chat (ENS resolve + ephemeral sessions + signed send), Settings (topology + bootstrap overrides).
+- [`apps/agent`](apps/agent) — `anton-agent` binary scaffold (`cargo run -p anton-agent`). Full A2A + `MemoryBackend` persistence is stubbed; set `ANTON_DEMO_AGENT=1` for the demo banner.
+- [`contracts`](contracts) — Foundry workspace housing `ChatRegistrar.sol`, the Durin-derived L2 registrar that mints `*.anton.eth` subnames with `addr`, `axl_peer_id`, and `axl_pubkey` text records in a single transaction. Deployed to Base Sepolia for the demo, Base for production.
 - [`packages/shared-types`](packages/shared-types) — TypeScript types shared between the Tauri Rust IPC surface and the React UI (envelopes, identities, IPC commands).
 - [`packages/axl-client-ts`](packages/axl-client-ts) — Reusable TypeScript client for the AXL HTTP bridge (`127.0.0.1:9002`). Used by the desktop UI and any future Node-side tooling/tests.
-- [`crates/`](crates) *(coming soon)* — Shared Rust workspace: `axen-core`, `axen-zerog`, `axen-inference`.
+- [`crates/axen-core`](crates/axen-core) — Shared Rust library: crypto, vault, ENS (incl. `anton.eth` → `axl_bootstrap_peers`), EIP-712 messaging, `MemoryBackend` + stub `ZeroGStorageMemory`.
 - [`docs/architecture.md`](docs/architecture.md) — Architecture overview distilled from the design plan.
 
 ## Identity model
@@ -33,7 +33,24 @@ The desktop app intentionally writes **only three things** to disk:
 | `settings.json` | Theme, last username, advanced bootstrap-peer overrides | Low (no chat content) |
 | `axl/private.pem` | Ed25519 PEM derived from the seed at unlock | Owner-only; recoverable from seed |
 
-Chat messages, conversation lists, contacts, ENS resolution caches, and pending outbound queues live exclusively in RAM and are dropped on lock/quit. A stolen laptop yields no past conversations because none were ever written. Opt-in chat history backed by 0G Storage is wired-but-disabled — see the design plan.
+Chat messages and open conversation handles live exclusively in RAM and are dropped on lock/quit. A stolen laptop yields no past conversations because none were ever written. Optional durable memory for agents uses the [`MemoryBackend`](crates/axen-core/src/memory/mod.rs) trait (`ZeroGStorageMemory` is a stub until the 0G sidecar ships).
+
+## Environment variables (dev)
+
+| Variable | Used by |
+|----------|---------|
+| `ENS_NETWORK` | `mainnet` (default) or `sepolia` — picks default L1 JSON-RPC for ENS when `ENS_RPC_URL` / `ENS_MAINNET_RPC_URL` are unset. |
+| `ENS_RPC_URL` | L1 JSON-RPC for ENS (`ens_resolve`, `/recv` verification, `anton.eth` → `axl_bootstrap_peers`). Overrides defaults. |
+| `ENS_MAINNET_RPC_URL` | Legacy alias for `ENS_RPC_URL` (same behavior). |
+| `ENS_UNIVERSAL_RESOLVER_ADDRESS` | Optional Universal Resolver contract on that L1 (defaults to the standard ENS deployment). |
+| `ANTON_CHAT_REGISTRAR` | Base Sepolia `ChatRegistrar` for onboarding `register_username` / `available`. |
+| `ANTON_REGISTRATION_GAS_PRIVATE_KEY` | Hex private key of the wallet that **pays gas** for `register_username` on Base Sepolia (e.g. deployment / `anton.eth` operator). The registered subname **`owner_`** is still the user’s derived address. |
+| `ANTON_BASE_SEPOLIA_RPC_URL` | JSON-RPC for registration txs (defaults to public Base Sepolia). |
+| `ANTON_DEMO_AGENT` | Set to `1` on `anton-agent` for the demo placeholder log line. |
+
+## Hackathon / demo
+
+See [`docs/demo-prep.md`](docs/demo-prep.md) for a two-machine checklist and submission talking points (AXL + ENS + 0G alignment). Optional iNFT narrative: [`docs/inft.md`](docs/inft.md).
 
 ## Tooling prerequisites
 
@@ -50,6 +67,7 @@ Local development assumes:
 ```bash
 pnpm install
 pnpm dev                 # runs the Tauri 2 desktop app in dev mode
+cargo build -p anton-agent   # headless agent scaffold (optional)
 pnpm contracts:build     # forge build
 pnpm contracts:test      # forge test
 ```
