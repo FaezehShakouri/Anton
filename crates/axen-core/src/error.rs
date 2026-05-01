@@ -49,6 +49,24 @@ pub enum AxenError {
     #[error("invalid peer id: {0}")]
     InvalidPeerId(String),
 
+    #[error("ens: invalid JSON-RPC URL")]
+    EnsInvalidRpcUrl,
+
+    #[error("ens: empty name")]
+    EnsEmptyName,
+
+    #[error("ens: missing required text record '{0}'")]
+    EnsMissingRecord(&'static str),
+
+    #[error("ens: invalid axl_peer_id record ({0})")]
+    EnsInvalidPeerRecord(String),
+
+    #[error("ens: resolution failed ({0})")]
+    EnsResolution(String),
+
+    #[error("ens: reverse resolution failed ({0})")]
+    EnsReverseResolution(String),
+
     #[error("axl transport: {0}")]
     Transport(String),
 

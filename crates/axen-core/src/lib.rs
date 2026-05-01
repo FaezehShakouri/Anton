@@ -15,17 +15,20 @@
 //! * [`crypto::eip712`] — EIP-712 typed-data sign/verify for the chat
 //!   `Envelope`.
 //! * [`settings`] — tiny `settings.json` reader/writer (no chat content).
+//! * [`axl`] — AXL sidecar config + PEM materialization + HTTP [`Transport`] implementation.
+//! * [`ens`] — Mainnet ENS resolution via alloy ([`ens::EnsResolver`]): Universal Resolver
+//!   forward lookups (CCIP-Read aware `addr` + `text`), reverse lookups, LRU TTL caches,
+//!   and the [`ens::IdentityResolver`] trait for messaging / UI wiring.
 //!
-//! Subsequent plan steps add `axl/`, `ens/`, `messaging/`, `memory/`, and
-//! `inference/` modules in this crate; the trait surfaces (`Transport`,
-//! `IdentityResolver`, `MessageHandler`, `MemoryBackend`, `Inference`) are
-//! introduced alongside their first implementations.
+//! Later plan steps still add `messaging/`, `memory/`, and `inference/` modules; traits like
+//! `MessageHandler`, `MemoryBackend`, and `Inference` ship with those implementations.
 
 #![forbid(unsafe_code)]
 #![deny(rust_2018_idioms)]
 
 pub mod axl;
 pub mod crypto;
+pub mod ens;
 pub mod error;
 pub mod settings;
 pub mod transport;
