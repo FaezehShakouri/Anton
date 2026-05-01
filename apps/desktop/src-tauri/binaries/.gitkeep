@@ -1,11 +1,18 @@
 # Bundled Tauri sidecars live here.
 #
-# Build the AXL Go binary per-target and drop it as:
+# Build the AXL Go binary per-target and drop it under the canonical
+# Tauri sidecar naming (target triple suffix, plus `.exe` on Windows):
+#
 #   axl-aarch64-apple-darwin
 #   axl-x86_64-apple-darwin
 #   axl-x86_64-pc-windows-msvc.exe
 #   axl-x86_64-unknown-linux-gnu
 #
-# Same naming convention for 0g-storage-client-<target>. Tauri's
-# `externalBin` and the sidecar lifecycle code in `src-tauri/src/` will
-# reference these files; they are intentionally not committed.
+# Same naming convention for `0g-storage-client-<target>` (added by the
+# `zerog-memory` plan step). Tauri's `externalBin` (see
+# `tauri.conf.json`) and the sidecar lifecycle code in
+# `src-tauri/src/sidecar.rs` reference these files; they are
+# intentionally not committed.
+#
+# A helper script that downloads release artifacts from the AXL repo and
+# drops them here lands as part of the `bootstrap-nodes` plan step.

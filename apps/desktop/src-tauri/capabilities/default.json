@@ -7,6 +7,19 @@
     "core:default",
     "core:window:default",
     "core:event:default",
-    "shell:default"
+    "shell:default",
+    {
+      "identifier": "shell:allow-spawn",
+      "allow": [
+        {
+          "name": "axl",
+          "sidecar": true,
+          "args": [
+            "--config",
+            { "validator": "\\S+" }
+          ]
+        }
+      ]
+    }
   ]
 }

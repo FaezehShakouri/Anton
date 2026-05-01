@@ -19,6 +19,8 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 tauri-plugin-shell = "2"
 
+axen-core = { path = "../../../crates/axen-core" }
+
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
@@ -26,9 +28,8 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
-
-# Wired into `crates/axen-core` by a later scaffold step.
-# axen-core = { path = "../../../crates/axen-core" }
+parking_lot = "0.12"
+futures-util = "0.3"
 
 [features]
 default = ["custom-protocol"]

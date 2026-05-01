@@ -1,6 +1,10 @@
 use tauri::Manager;
+use tauri::RunEvent;
 
 mod commands;
+mod sidecar;
+
+pub use sidecar::{AxlSidecar, AxlSidecarState, SidecarError};
 
 /// Returns the version string baked in at compile time.
 ///
@@ -22,8 +26,9 @@ pub fn run() {
         .try_init()
         .ok();
 
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .manage(AxlSidecarState::default())
         .setup(|app| {
             tracing::info!(
                 version = env!("CARGO_PKG_VERSION"),
@@ -35,7 +40,20 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             app_version,
             commands::ping,
+            commands::axl_topology,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running axen desktop");
+        .build(tauri::generate_context!())
+        .expect("error while building axen desktop");
+
+    // Shut the AXL sidecar down before the process exits, regardless of
+    // whether the exit was triggered by Cmd-Q, the close button, or a
+    // SIGTERM. `RunEvent::Exit` fires once after every window has
+    // closed, just before the event loop terminates.
+    app.run(|app_handle, event| {
+        if matches!(event, RunEvent::Exit | RunEvent::ExitRequested { .. }) {
+            if let Some(state) = app_handle.try_state::<AxlSidecarState>() {
+                state.shutdown();
+            }
+        }
+    });
 }
