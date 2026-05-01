@@ -29,6 +29,15 @@ alloy-primitives = "1"
 alloy-sol-types = "1"
 tiny-keccak = { version = "2", features = ["keccak"] }
 
+# HTTP transport
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "stream"] }
+async-trait = "0.1"
+futures-core = "0.3"
+futures-util = "0.3"
+bytes = "1"
+tokio = { workspace = true }
+tracing = { workspace = true }
+
 # Utilities
 anyhow = { workspace = true }
 thiserror = { workspace = true }
@@ -41,3 +50,5 @@ rand_core = { version = "0.6", features = ["std", "getrandom"] }
 [dev-dependencies]
 hex-literal = "0.4"
 tempfile = "3"
+tokio = { workspace = true }
+wiremock = "0.6"

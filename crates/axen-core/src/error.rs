@@ -46,11 +46,26 @@ pub enum AxenError {
     #[error("ed25519 PKCS#8 encoding failed")]
     Ed25519PemEncoding,
 
+    #[error("invalid peer id: {0}")]
+    InvalidPeerId(String),
+
+    #[error("axl transport: {0}")]
+    Transport(String),
+
+    #[error("axl http: {status} {message}")]
+    AxlHttp { status: u16, message: String },
+
+    #[error("axl recv: missing {0} header")]
+    AxlMissingHeader(&'static str),
+
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
 
     #[error("json: {0}")]
     Json(#[from] serde_json::Error),
+
+    #[error("http: {0}")]
+    Http(#[from] reqwest::Error),
 
     #[error(transparent)]
     Other(#[from] anyhow::Error),

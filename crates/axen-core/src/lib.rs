@@ -24,8 +24,11 @@
 #![forbid(unsafe_code)]
 #![deny(rust_2018_idioms)]
 
+pub mod axl;
 pub mod crypto;
 pub mod error;
 pub mod settings;
+pub mod transport;
 
 pub use error::{AxenError, Result};
+pub use transport::{Inbound, InboundStream, PeerId, Topology, Transport};
