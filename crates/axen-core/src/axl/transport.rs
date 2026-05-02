@@ -260,6 +260,16 @@ struct RawTopology {
     bootstrap_peers: Option<Vec<String>>,
     #[serde(default, alias = "ConnectedPeers", alias = "connectedPeers")]
     connected_peers: Option<u32>,
+    #[serde(default, alias = "Peers")]
+    peers: Option<Vec<RawTopologyPeer>>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RawTopologyPeer {
+    #[serde(default, alias = "Uri", alias = "URI")]
+    uri: Option<String>,
+    #[serde(default, alias = "Up")]
+    up: Option<bool>,
 }
 
 /// Normalize a 32-byte ed25519 public key hex string to canonical `0x` + 64
@@ -423,10 +433,30 @@ fn parse_topology(raw: serde_json::Value) -> Result<Topology> {
         )
     })?;
     let self_peer_id = normalize_peer_hex_str(&self_peer_id).unwrap_or(self_peer_id);
+    let bootstrap_peers = parsed.bootstrap_peers.unwrap_or_else(|| {
+        parsed
+            .peers
+            .as_ref()
+            .map(|peers| {
+                peers
+                    .iter()
+                    .filter_map(|p| p.uri.clone())
+                    .filter(|uri| !uri.trim().is_empty())
+                    .collect()
+            })
+            .unwrap_or_default()
+    });
+    let connected_peers = parsed.connected_peers.unwrap_or_else(|| {
+        parsed
+            .peers
+            .as_ref()
+            .map(|peers| peers.iter().filter(|p| p.up.unwrap_or(false)).count() as u32)
+            .unwrap_or(0)
+    });
     Ok(Topology {
         self_peer_id: PeerId::from_hex(&self_peer_id)?,
-        bootstrap_peers: parsed.bootstrap_peers.unwrap_or_default(),
-        connected_peers: parsed.connected_peers.unwrap_or(0),
+        bootstrap_peers,
+        connected_peers,
         raw: Some(raw),
     })
 }
@@ -704,6 +734,38 @@ mod tests {
         assert_eq!(topo.self_peer_id, self_id);
         assert_eq!(topo.bootstrap_peers, vec!["tls://z:9001"]);
         assert_eq!(topo.connected_peers, 7);
+    }
+
+    #[tokio::test]
+    async fn topology_derives_peers_from_axl_peer_array() {
+        let server = mock_server().await;
+        let self_id = peer(0xdb);
+
+        Mock::given(method("GET"))
+            .and(path("/topology"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "our_public_key": self_id.to_hex_unprefixed(),
+                "peers": [
+                    { "uri": "tls://34.46.48.224:9001", "up": true },
+                    { "uri": "tls://136.111.135.206:9001", "up": true },
+                    { "uri": "tls://offline.example:9001", "up": false }
+                ]
+            })))
+            .mount(&server)
+            .await;
+
+        let transport = AxlTransport::new(client_for(&server));
+        let topo = transport.topology().await.unwrap();
+        assert_eq!(topo.self_peer_id, self_id);
+        assert_eq!(
+            topo.bootstrap_peers,
+            vec![
+                "tls://34.46.48.224:9001",
+                "tls://136.111.135.206:9001",
+                "tls://offline.example:9001",
+            ]
+        );
+        assert_eq!(topo.connected_peers, 2);
     }
 
     #[tokio::test]
