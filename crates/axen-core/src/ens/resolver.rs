@@ -33,8 +33,8 @@ alloy::sol! {
 
 const ENS_RESOLUTION_HINT: &str = "\
 (Hint: use full name like name.anton.eth or a bare username; ENS_RPC_URL must point at Ethereum \
-L1 with CCIP-ready Universal Resolver — not an L2 JSON-RPC URL; if you just redeployed the \
-registrar, register again after fixing ChatRegistrar ordering: setAddr/setText before createSubnode.)";
+L1 with the ENS Universal Resolver — not an L2 JSON-RPC URL; confirm the subname has \
+addr(60), axl_peer_id, and axl_pubkey records on the configured Public Resolver.)";
 
 /// Configuration for [`EnsResolver`] in-memory caches (LRU + TTL).
 #[derive(Clone, Debug)]
