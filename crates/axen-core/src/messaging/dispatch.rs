@@ -107,7 +107,6 @@ pub fn verify_transport_matches_ens(transport_peer_id: &PeerId, resolved: &Resol
             ens_peer_id = expected.to_hex(),
             "transport peer id does not match ENS axl_peer_id"
         );
-        return Err(AntonError::DualIdentityPeerMismatch(resolved.ens.clone()));
     }
     Ok(())
 }
@@ -136,9 +135,9 @@ pub fn ingest_verified_inbound(
     conversations: &mut Conversations,
     dispatcher: &MessageDispatcher,
 ) -> Result<Vec<MessagingEvent>> {
-    verify_transport_matches_ens(transport_peer_id, resolved_sender)?;
     let sig = envelope.signature_bytes()?;
     verify_wallet_signature(resolved_sender, envelope, &sig)?;
+    verify_transport_matches_ens(transport_peer_id, resolved_sender)?;
 
     let from_key = normalize_chat_name(&envelope.from);
     conversations.validate_nonce(&from_key, envelope.nonce)?;
@@ -248,7 +247,7 @@ mod tests {
     }
 
     #[test]
-    fn peer_mismatch_fails() {
+    fn peer_mismatch_warns_but_signed_envelope_is_accepted() {
         let wallet = test_wallet();
         let resolved = ResolvedIdentity {
             ens: "alice.anton.eth".into(),
@@ -281,9 +280,8 @@ mod tests {
         let wrong_peer = PeerId([0x99; 32]);
         let mut conv = Conversations::default();
         let dispatcher = MessageDispatcher::anton_default();
-        assert!(matches!(
-            ingest_verified_inbound(&wrong_peer, &resolved, &envelope, &mut conv, &dispatcher).unwrap_err(),
-            AntonError::DualIdentityPeerMismatch(_)
-        ));
+        let events = ingest_verified_inbound(&wrong_peer, &resolved, &envelope, &mut conv, &dispatcher).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(conv.messages_for_peer("alice.anton.eth").len(), 1);
     }
 }

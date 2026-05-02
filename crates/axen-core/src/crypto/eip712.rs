@@ -86,9 +86,7 @@ pub fn sign_envelope(wallet: &Wallet, fields: EnvelopeFields<'_>) -> Result<[u8;
     wallet.sign_prehash(&digest_bytes)
 }
 
-/// Verify an envelope signature against the expected wallet address. This
-/// is the second half of Anton's dual identity check (the first being
-/// `X-From-Peer-Id` matching the resolved `axl_peer_id` text record).
+/// Verify an envelope signature against the expected wallet address.
 pub fn verify_envelope(
     fields: EnvelopeFields<'_>,
     sig: &[u8; 65],
