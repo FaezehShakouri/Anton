@@ -33,7 +33,7 @@ impl Default for ChatStateInner {
     fn default() -> Self {
         Self {
             open: HashSet::new(),
-            next_out_nonce: 1,
+            next_out_nonce: 0,
         }
     }
 }
@@ -199,8 +199,8 @@ pub async fn chat_send<R: Runtime>(
 
     let nonce = {
         let mut c = chat.inner.lock();
-        let n = c.next_out_nonce;
-        c.next_out_nonce = c.next_out_nonce.saturating_add(1);
+        let n = c.next_out_nonce.max(ts);
+        c.next_out_nonce = n.saturating_add(1);
         n
     };
 
