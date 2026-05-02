@@ -67,15 +67,25 @@ export function ChatPage() {
   useEffect(() => {
     const unlisten = listen<{ peer: string; message: ChatMessage }>("chat:message-received", (ev) => {
       const peer = ev.payload?.peer?.toLowerCase();
-      if (!peer || !activeNorm) return;
-      if (peer === activeNorm || ev.payload.message.from.toLowerCase() === activeNorm) {
-        void refreshMessages(activeNorm);
-      }
+      if (!peer) return;
+      setSessions((s) => (s.includes(peer) ? s : [...s, peer]));
+      void (async () => {
+        try {
+          const opened = await ipc("chat_open", { ens: peer });
+          setActiveEns(peer);
+          navigate(`/chat/${encodeURIComponent(peer)}`);
+          setMessages(opened.messages);
+        } catch {
+          if (activeNorm === peer) {
+            await refreshMessages(peer);
+          }
+        }
+      })();
     });
     return () => {
       void unlisten.then((u) => u());
     };
-  }, [activeNorm, refreshMessages]);
+  }, [activeNorm, navigate, refreshMessages]);
 
   const handleResolve = async () => {
     const name = query.trim();
