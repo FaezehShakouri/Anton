@@ -240,9 +240,8 @@ export function OnboardingPage() {
       <div className="mx-auto flex h-full max-w-md flex-col justify-center px-6 py-10">
         <h1 className="text-2xl font-semibold tracking-tight">Choose your name</h1>
         <p className="mt-2 text-sm text-slate-400">
-          Register <code className="font-mono text-slate-300">username.anton.eth</code> on Base Sepolia via{" "}
-          <code className="font-mono text-slate-300">ChatRegistrar</code>. Set{" "}
-          <code className="font-mono text-slate-300">ANTON_CHAT_REGISTRAR</code> before launching the app.
+          Register <code className="font-mono text-slate-300">username.anton.eth</code> directly on Sepolia ENS. Set{" "}
+          <code className="font-mono text-slate-300">ANTON_ENS_REGISTRATION_PRIVATE_KEY</code> before launching the app.
         </p>
         <label className="mt-6 block text-xs font-medium text-slate-300">
           Username (label only)
@@ -287,7 +286,7 @@ export function OnboardingPage() {
           </button>
         </div>
         {availability === true ? (
-          <p className="mt-2 text-xs text-emerald-400">Looks available on the registrar contract.</p>
+          <p className="mt-2 text-xs text-emerald-400">Looks available on Sepolia ENS.</p>
         ) : null}
         {error ? (
           <p className="mt-3 text-sm text-red-400" role="alert">
@@ -479,11 +478,11 @@ export function OnboardingPage() {
       </div>
 
       <div className="mt-10 border-t border-slate-800 pt-8">
-        <h2 className="text-sm font-medium text-slate-200">Register on Base Sepolia</h2>
+        <h2 className="text-sm font-medium text-slate-200">Register on Sepolia ENS</h2>
         <p className="mt-1 text-xs text-slate-500">
-          After your vault is saved, mint <code className="font-mono">name.anton.eth</code>. Gas is paid by{" "}
-          <code className="font-mono">ANTON_REGISTRATION_GAS_PRIVATE_KEY</code> (deployment wallet); your derived address
-          is the on-chain owner. Set <code className="font-mono">ANTON_CHAT_REGISTRAR</code>.
+          After your vault is saved, create <code className="font-mono">name.anton.eth</code> on Sepolia. Gas is paid by{" "}
+          <code className="font-mono">ANTON_ENS_REGISTRATION_PRIVATE_KEY</code> (the parent-name operator); your derived
+          address is the final ENS owner.
         </p>
         <label className="mt-4 block text-xs font-medium text-slate-300">
           Username
@@ -504,7 +503,7 @@ export function OnboardingPage() {
             onClick={() => void handleCheckUsername()}
             className="rounded-md border border-slate-600 px-3 py-1.5 text-sm text-slate-200 hover:bg-slate-900 disabled:opacity-50"
           >
-            Check registrar
+            Check ENS
           </button>
           <button
             type="button"
@@ -516,7 +515,7 @@ export function OnboardingPage() {
           </button>
         </div>
         {availability === true ? (
-          <p className="mt-2 text-xs text-emerald-400">Available according to the registrar contract.</p>
+          <p className="mt-2 text-xs text-emerald-400">Available on Sepolia ENS.</p>
         ) : null}
       </div>
 
