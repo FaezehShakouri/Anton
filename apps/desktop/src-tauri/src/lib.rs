@@ -2,6 +2,7 @@ use tauri::Manager;
 use tauri::RunEvent;
 
 mod chat;
+mod agent;
 mod commands;
 mod messaging;
 mod onboarding;
@@ -12,6 +13,7 @@ mod sidecar;
 use messaging::MessagingState;
 use session::IdentitySessionState;
 
+use agent::AgentState;
 use chat::{ChatState, ResolverState};
 
 pub use sidecar::{AxlSidecar, AxlSidecarState, SidecarError};
@@ -47,12 +49,18 @@ pub fn run() {
         .manage(MessagingState::default())
         .manage(IdentitySessionState::default())
         .manage(ChatState::default())
+        .manage(AgentState::default())
         .setup(|app| {
             tracing::info!(
                 version = env!("CARGO_PKG_VERSION"),
                 data_dir = ?app.path().app_data_dir().ok(),
                 "anton desktop starting"
             );
+            if let Some(agent_state) = app.try_state::<AgentState>() {
+                if let Err(e) = agent_state.initialize(app.handle()) {
+                    tracing::warn!(target: "anton::agent", "agent storage not started: {e}");
+                }
+            }
             let (rpc, ens_config) = anton_core::ens::ens_rpc_and_resolver_config();
             tracing::debug!(
                 target = "anton::ens",
@@ -93,6 +101,11 @@ pub fn run() {
             chat::chat_close,
             chat::chat_send,
             chat::chat_history,
+            agent::agent_get_settings,
+            agent::agent_update_settings,
+            agent::agent_get_conversation_mode,
+            agent::agent_set_conversation_mode,
+            agent::agent_test_provider,
         ])
         .build(tauri::generate_context!())
         .expect("error while building anton desktop");

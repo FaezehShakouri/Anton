@@ -169,16 +169,46 @@ pub async fn chat_send<R: Runtime>(
     text: String,
     reply_to: Option<ChatReply>,
 ) -> Result<ChatSendResponse, String> {
+    send_chat_message(
+        &app,
+        &chat,
+        &resolver,
+        &session,
+        &messaging,
+        &sidecar_state,
+        to,
+        text,
+        reply_to,
+        false,
+    )
+    .await
+}
+
+pub async fn send_chat_message<R: Runtime>(
+    app: &AppHandle<R>,
+    chat: &ChatState,
+    resolver: &ResolverState,
+    session: &IdentitySessionState,
+    messaging: &MessagingState,
+    sidecar_state: &AxlSidecarState,
+    to: String,
+    text: String,
+    reply_to: Option<ChatReply>,
+    open_if_missing: bool,
+) -> Result<ChatSendResponse, String> {
     let Some(unlocked) = session.snapshot() else {
         return Err("Unlock your vault before sending messages.".into());
     };
 
     let to_key = normalize_chat_name(&to);
-    if !chat.inner.lock().open.contains(&to_key) {
+    let is_open = chat.inner.lock().open.contains(&to_key);
+    if !is_open && open_if_missing {
+        chat.inner.lock().open.insert(to_key.clone());
+    } else if !is_open {
         return Err("Open the conversation in the sidebar before sending.".into());
     }
 
-    let settings_path = settings_path(&app)?;
+    let settings_path = settings_path(app)?;
     let settings = Settings::load_or_default(&settings_path).map_err(|e| e.to_string())?;
     let from_ens = settings
         .last_username

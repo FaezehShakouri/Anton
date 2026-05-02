@@ -14,6 +14,13 @@ type Resolved = {
   description?: string;
 };
 
+type AgentStatus = {
+  peer: string;
+  status: "thinking" | "sent" | "error" | string;
+  error?: string | null;
+  messageId?: string | null;
+};
+
 function toReply(message: ChatMessage): ChatReply {
   return {
     id: message.id,
@@ -39,6 +46,9 @@ export function ChatPage() {
   const [sendBusy, setSendBusy] = useState(false);
   const [ensUpdateBusy, setEnsUpdateBusy] = useState(false);
   const [ensUpdateStatus, setEnsUpdateStatus] = useState<string | null>(null);
+  const [agentEnabled, setAgentEnabled] = useState(false);
+  const [agentBusy, setAgentBusy] = useState(false);
+  const [agentStatus, setAgentStatus] = useState<string | null>(null);
   const messageEndRef = useRef<HTMLDivElement | null>(null);
 
   const activeNorm = useMemo(
@@ -63,12 +73,16 @@ export function ChatPage() {
     if (!activeNorm) {
       setMessages([]);
       setReplyTo(null);
+      setAgentEnabled(false);
+      setAgentStatus(null);
       return;
     }
     void (async () => {
       try {
         await ipc("chat_open", { ens: activeNorm });
         await refreshMessages(activeNorm);
+        const mode = await ipc("agent_get_conversation_mode", { peer: activeNorm });
+        setAgentEnabled(mode.enabled);
       } catch {
         setMessages([]);
       }
@@ -102,6 +116,24 @@ export function ChatPage() {
       void unlisten.then((u) => u());
     };
   }, [activeNorm, navigate, refreshMessages]);
+
+  useEffect(() => {
+    const unlisten = listen<AgentStatus>("agent:status", (ev) => {
+      const payload = ev.payload;
+      if (!payload?.peer || payload.peer.toLowerCase() !== activeNorm) return;
+      if (payload.status === "thinking") {
+        setAgentStatus("Agent is thinking…");
+      } else if (payload.status === "sent") {
+        setAgentStatus("Agent replied");
+        void refreshMessages(payload.peer);
+      } else if (payload.status === "error") {
+        setAgentStatus(payload.error ?? "Agent reply failed");
+      }
+    });
+    return () => {
+      void unlisten.then((u) => u());
+    };
+  }, [activeNorm, refreshMessages]);
 
   const handleResolve = async () => {
     const name = query.trim();
@@ -175,6 +207,21 @@ export function ChatPage() {
       setResolveError(e instanceof Error ? e.message : String(e));
     } finally {
       setEnsUpdateBusy(false);
+    }
+  };
+
+  const toggleAgent = async () => {
+    if (!activeNorm) return;
+    const next = !agentEnabled;
+    setAgentBusy(true);
+    setAgentStatus(null);
+    try {
+      const res = await ipc("agent_set_conversation_mode", { peer: activeNorm, enabled: next });
+      setAgentEnabled(res.enabled);
+    } catch (e) {
+      setAgentStatus(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAgentBusy(false);
     }
   };
 
@@ -262,16 +309,37 @@ export function ChatPage() {
                 ENS + wallet signature on receive
               </span>
             ) : null}
+            {activeNorm ? (
+              <span className="w-fit rounded-full bg-slate-800 px-2 py-0.5 text-[10px] text-slate-300">
+                {agentEnabled ? "Agent replies enabled" : "Manual replies"}
+              </span>
+            ) : null}
             {ensUpdateStatus ? <span className="text-[10px] text-emerald-400">{ensUpdateStatus}</span> : null}
+            {agentStatus ? <span className="text-[10px] text-slate-400">{agentStatus}</span> : null}
           </div>
-          <button
-            type="button"
-            disabled={ensUpdateBusy}
-            onClick={() => void handleUpdateEnsRecords()}
-            className="shrink-0 rounded-md border border-slate-700 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-900 disabled:opacity-50"
-          >
-            {ensUpdateBusy ? "Updating ENS…" : "Update my ENS records"}
-          </button>
+          <div className="flex shrink-0 gap-2">
+            <button
+              type="button"
+              disabled={!activeNorm || agentBusy}
+              onClick={() => void toggleAgent()}
+              className={cn(
+                "rounded-md border px-3 py-1.5 text-xs disabled:opacity-50",
+                agentEnabled
+                  ? "border-emerald-700 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20"
+                  : "border-slate-700 text-slate-300 hover:bg-slate-900",
+              )}
+            >
+              {agentBusy ? "Saving…" : agentEnabled ? "Agent replies" : "Manual"}
+            </button>
+            <button
+              type="button"
+              disabled={ensUpdateBusy}
+              onClick={() => void handleUpdateEnsRecords()}
+              className="rounded-md border border-slate-700 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-900 disabled:opacity-50"
+            >
+              {ensUpdateBusy ? "Updating ENS…" : "Update my ENS records"}
+            </button>
+          </div>
         </header>
         <div className="flex flex-1 flex-col overflow-hidden">
           <div className="flex-1 space-y-2 overflow-y-auto px-4 py-3">

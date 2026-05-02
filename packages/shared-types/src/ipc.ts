@@ -103,6 +103,48 @@ export interface TauriCommands {
     returns: ChatMessage[];
   };
 
+  agent_get_settings: {
+    args: void;
+    returns: {
+      provider: "open_router" | "local_open_ai";
+      model: string;
+      baseUrl: string;
+      systemPrompt: string;
+      apiKeyConfigured: boolean;
+    };
+  };
+  agent_update_settings: {
+    args: {
+      settings: {
+        provider: "open_router" | "local_open_ai";
+        model: string;
+        baseUrl: string;
+        systemPrompt: string;
+        apiKey?: string;
+        clearApiKey?: boolean;
+      };
+    };
+    returns: {
+      provider: "open_router" | "local_open_ai";
+      model: string;
+      baseUrl: string;
+      systemPrompt: string;
+      apiKeyConfigured: boolean;
+    };
+  };
+  agent_get_conversation_mode: {
+    args: { peer: EnsName };
+    returns: { peer: EnsName; enabled: boolean };
+  };
+  agent_set_conversation_mode: {
+    args: { peer: EnsName; enabled: boolean };
+    returns: { peer: EnsName; enabled: boolean };
+  };
+  agent_test_provider: {
+    args: void;
+    returns: { ok: boolean; message: string };
+  };
+
   settings_set_bootstrap_peers: {
     args: { peers: string[] };
     returns: void;

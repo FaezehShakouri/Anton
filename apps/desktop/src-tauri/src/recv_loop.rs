@@ -6,6 +6,7 @@ use anton_core::ens::IdentityResolver;
 use anton_core::messaging::{ingest_verified_inbound, MessagingEvent, WireEnvelope};
 use tauri::{AppHandle, Emitter, Manager};
 
+use crate::agent;
 use crate::messaging::{MessagingInner, MessagingState};
 use crate::sidecar::AxlSidecarState;
 
@@ -73,8 +74,9 @@ pub async fn run(app: AppHandle, resolver: Arc<dyn IdentityResolver>) {
 
         for ev in events {
             let MessagingEvent::ChatMessageReceived { peer, message } = ev;
-            let payload = serde_json::json!({ "peer": peer, "message": message });
+            let payload = serde_json::json!({ "peer": peer.clone(), "message": message.clone() });
             let _ = app.emit("chat:message-received", payload);
+            agent::maybe_auto_reply(app.clone(), peer, message);
         }
     }
 }

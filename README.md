@@ -47,6 +47,7 @@ Chat messages and open conversation handles live exclusively in RAM and are drop
 | `ENS_REGISTRY_ADDRESS` | Optional ENS Registry override (defaults to Sepolia ENS Registry). |
 | `ENS_PUBLIC_RESOLVER_ADDRESS` | Optional Public Resolver override (defaults to Sepolia Public Resolver). |
 | `ENS_NAME_WRAPPER_ADDRESS` | Optional Name Wrapper override (defaults to Sepolia Name Wrapper). Used when the parent name is wrapped. |
+| `OPENROUTER_API_KEY` | Optional API key for personal agent auto-replies when the OpenRouter provider is selected. |
 
 ## Tooling prerequisites
 

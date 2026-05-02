@@ -42,6 +42,8 @@ parking_lot = "0.12"
 futures-util = "0.3"
 uuid = { version = "1", features = ["v4"] }
 hex = "0.4"
+rusqlite = { version = "0.39.0", features = ["bundled"] }
+reqwest = { version = "0.13.3", default-features = false, features = ["json", "rustls"] }
 
 [features]
 default = ["custom-protocol"]
