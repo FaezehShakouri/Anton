@@ -87,6 +87,7 @@ pub fn run() {
             onboarding::unlock_vault,
             onboarding::onboarding_check_username,
             onboarding::register_username,
+            onboarding::update_current_ens_records,
             chat::ens_resolve,
             chat::chat_open,
             chat::chat_close,

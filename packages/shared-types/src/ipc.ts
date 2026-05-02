@@ -58,6 +58,16 @@ export interface TauriCommands {
     returns: { txHash: string; ens: string };
   };
 
+  update_current_ens_records: {
+    args: void;
+    returns: {
+      ens: string;
+      addrTxHash: string;
+      peerIdTxHash: string;
+      pubkeyTxHash: string;
+    };
+  };
+
   messaging_ingest_verified_inbound: {
     args: {
       transportPeerHex: string;

@@ -200,6 +200,26 @@ impl AxlSidecarState {
     }
 }
 
+pub async fn wait_for_bridge_to_close(deadline: Duration) -> bool {
+    let Ok(client) = AxlHttpClient::new() else {
+        return true;
+    };
+    let start = Instant::now();
+    let mut backoff = Duration::from_millis(50);
+    let max_backoff = Duration::from_millis(250);
+
+    loop {
+        if client.topology().await.is_err() {
+            return true;
+        }
+        if start.elapsed() >= deadline {
+            return false;
+        }
+        tokio::time::sleep(backoff).await;
+        backoff = (backoff * 2).min(max_backoff);
+    }
+}
+
 fn spawn_axl<R: Runtime>(app: &AppHandle<R>, config_path: &Path) -> SidecarResult<CommandChild> {
     let command = app
         .shell()

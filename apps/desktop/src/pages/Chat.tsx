@@ -28,6 +28,8 @@ export function ChatPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
   const [sendBusy, setSendBusy] = useState(false);
+  const [ensUpdateBusy, setEnsUpdateBusy] = useState(false);
+  const [ensUpdateStatus, setEnsUpdateStatus] = useState<string | null>(null);
 
   const activeNorm = useMemo(
     () => (activeEns ? activeEns.trim().toLowerCase() : null),
@@ -129,6 +131,20 @@ export function ChatPage() {
     }
   };
 
+  const handleUpdateEnsRecords = async () => {
+    setEnsUpdateBusy(true);
+    setEnsUpdateStatus(null);
+    setResolveError(null);
+    try {
+      const res = await ipc("update_current_ens_records");
+      setEnsUpdateStatus(`Updated ${res.ens}`);
+    } catch (e) {
+      setResolveError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setEnsUpdateBusy(false);
+    }
+  };
+
   return (
     <div className="grid h-full grid-cols-[18rem_1fr]">
       <aside className="flex flex-col border-r border-slate-800 bg-slate-950/40">
@@ -213,7 +229,16 @@ export function ChatPage() {
                 ENS + wallet signature on receive
               </span>
             ) : null}
+            {ensUpdateStatus ? <span className="text-[10px] text-emerald-400">{ensUpdateStatus}</span> : null}
           </div>
+          <button
+            type="button"
+            disabled={ensUpdateBusy}
+            onClick={() => void handleUpdateEnsRecords()}
+            className="shrink-0 rounded-md border border-slate-700 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-900 disabled:opacity-50"
+          >
+            {ensUpdateBusy ? "Updating ENS…" : "Update my ENS records"}
+          </button>
         </header>
         <div className="flex flex-1 flex-col overflow-hidden">
           <div className="flex-1 space-y-2 overflow-y-auto px-4 py-3">

@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use alloy::ens::namehash;
 use alloy::primitives::{keccak256, Address, Bytes, B256, U256};
@@ -104,6 +105,15 @@ pub struct RegisterUsernameResponse {
     pub ens: String,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateEnsRecordsResponse {
+    pub ens: String,
+    pub addr_tx_hash: String,
+    pub peer_id_tx_hash: String,
+    pub pubkey_tx_hash: String,
+}
+
 fn settings_path<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
     let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     Ok(Settings::default_path(&dir))
@@ -183,6 +193,24 @@ fn registration_gas_signer() -> Result<PrivateKeySigner, String> {
         .map(|s| s.with_chain_id(Some(SEPOLIA_CHAIN_ID)))
 }
 
+fn user_wallet_signer(wallet: &Wallet) -> Result<PrivateKeySigner, String> {
+    let secret = wallet.secret_bytes();
+    let raw = format!("0x{}", hex::encode(&*secret));
+    PrivateKeySigner::from_str(&raw)
+        .map_err(|e| format!("derive ENS owner signer: {e}"))
+        .map(|s| s.with_chain_id(Some(SEPOLIA_CHAIN_ID)))
+}
+
+fn label_from_ens_name(name: &str) -> Result<String, String> {
+    let normalized = name.trim().to_ascii_lowercase();
+    let parent = ens_parent_name();
+    let suffix = format!(".{parent}");
+    let label = normalized
+        .strip_suffix(&suffix)
+        .ok_or_else(|| format!("Saved ENS name must end with .{parent}."))?;
+    normalize_label(label)
+}
+
 fn derive_from_mnemonic(mnemonic: &MnemonicPhrase) -> Result<(Wallet, Ed25519Identity), String> {
     let seed = mnemonic.to_seed("");
     let wallet = Wallet::from_seed(&*seed).map_err(|e| e.to_string())?;
@@ -196,6 +224,12 @@ async fn boot_sidecar<R: Runtime>(
     ed25519: &Ed25519Identity,
 ) -> Result<(), String> {
     sidecar_state.shutdown();
+    if !crate::sidecar::wait_for_bridge_to_close(Duration::from_secs(3)).await {
+        tracing::warn!(
+            target: "anton::sidecar",
+            "axl bridge still responded after shutdown; relaunch may fail if another process owns port 9002"
+        );
+    }
     let merged = crate::sidecar::merged_bootstrap_peers(app).await;
     let sidecar = AxlSidecar::launch(app, ed25519, Some(merged))
         .await
@@ -443,5 +477,99 @@ pub async fn register_username<R: Runtime>(
     Ok(RegisterUsernameResponse {
         tx_hash: format!("{:#x}", tx_hash),
         ens,
+    })
+}
+
+#[tauri::command]
+pub async fn update_current_ens_records<R: Runtime>(
+    app: AppHandle<R>,
+    session_state: State<'_, IdentitySessionState>,
+) -> Result<UpdateEnsRecordsResponse, String> {
+    let settings_path = settings_path(&app)?;
+    let settings = Settings::load_or_default(&settings_path).map_err(|e| e.to_string())?;
+    let ens = settings
+        .last_username
+        .clone()
+        .ok_or_else(|| "No saved ENS username. Register or select a username first.".to_string())?;
+    let label = label_from_ens_name(&ens)?;
+
+    let id = session_state
+        .snapshot()
+        .ok_or_else(|| "Unlock your vault before updating ENS records.".to_string())?;
+
+    let registry_addr = ens_registry_address()?;
+    let resolver_addr = ens_public_resolver_address()?;
+    let name_wrapper_addr = ens_name_wrapper_address()?;
+    let rpc_url = ens_registration_rpc_url()
+        .parse()
+        .map_err(|_| "Invalid ENS_RPC_URL.".to_string())?;
+    let signer = user_wallet_signer(&id.wallet)?;
+    let provider = ProviderBuilder::new().wallet(signer).connect_http(rpc_url);
+
+    let owner = id.wallet.address();
+    let peer_id = id.ed25519.peer_id_hex();
+    let pem = id.ed25519.to_public_pkcs8_pem().map_err(|e| e.to_string())?;
+    let (_, _, node) = ens_nodes_for_label(&label);
+
+    let registry = EnsRegistry::new(registry_addr, &provider);
+    let resolver = PublicResolver::new(resolver_addr, &provider);
+
+    let existing_owner = registry
+        .owner(node)
+        .call()
+        .await
+        .map_err(|e| format!("check ENS owner: {e}"))?;
+    if existing_owner != owner && existing_owner != name_wrapper_addr {
+        return Err(format!(
+            "{ens} is owned by {}, not the unlocked wallet {}.",
+            existing_owner.to_checksum(None),
+            owner.to_checksum(None)
+        ));
+    }
+
+    let pending = resolver
+        .setAddr(node, owner)
+        .send()
+        .await
+        .map_err(|e| format!("set addr(60): {e}"))?;
+    let addr_tx_hash = pending
+        .watch()
+        .await
+        .map_err(|e| format!("wait for set addr(60): {e}"))?;
+
+    let pending = resolver
+        .setText(node, "axl_peer_id".to_string(), peer_id)
+        .send()
+        .await
+        .map_err(|e| format!("set axl_peer_id: {e}"))?;
+    let peer_id_tx_hash = pending
+        .watch()
+        .await
+        .map_err(|e| format!("wait for set axl_peer_id: {e}"))?;
+
+    let pending = resolver
+        .setText(node, "axl_pubkey".to_string(), pem)
+        .send()
+        .await
+        .map_err(|e| format!("set axl_pubkey: {e}"))?;
+    let pubkey_tx_hash = pending
+        .watch()
+        .await
+        .map_err(|e| format!("wait for set axl_pubkey: {e}"))?;
+
+    tracing::info!(
+        target = "anton::onboarding",
+        ens = ens.as_str(),
+        addr_tx = format!("{addr_tx_hash:#x}"),
+        peer_id_tx = format!("{peer_id_tx_hash:#x}"),
+        pubkey_tx = format!("{pubkey_tx_hash:#x}"),
+        "updated ENS identity records"
+    );
+
+    Ok(UpdateEnsRecordsResponse {
+        ens,
+        addr_tx_hash: format!("{addr_tx_hash:#x}"),
+        peer_id_tx_hash: format!("{peer_id_tx_hash:#x}"),
+        pubkey_tx_hash: format!("{pubkey_tx_hash:#x}"),
     })
 }

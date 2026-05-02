@@ -100,12 +100,12 @@ impl MessageHandler for ChatTextV1Handler {
 pub fn verify_transport_matches_ens(transport_peer_id: &PeerId, resolved: &ResolvedIdentity) -> Result<()> {
     let expected = PeerId::from_hex(resolved.peer_id_hex.trim())?;
     if *transport_peer_id != expected {
-        tracing::warn!(
+        tracing::debug!(
             target = "anton_core::messaging",
             ens = resolved.ens.as_str(),
             transport_peer_id = transport_peer_id.to_hex(),
             ens_peer_id = expected.to_hex(),
-            "transport peer id does not match ENS axl_peer_id"
+            "transport peer id differs from ENS axl_peer_id; accepting signed envelope"
         );
     }
     Ok(())
