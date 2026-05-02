@@ -50,10 +50,6 @@ Chat messages and open conversation handles live exclusively in RAM and are drop
 | `ENS_NAME_WRAPPER_ADDRESS` | Optional Name Wrapper override (defaults to Sepolia Name Wrapper). Used when the parent name is wrapped. |
 | `ANTON_DEMO_AGENT` | Set to `1` on `anton-agent` for the demo placeholder log line. |
 
-## Hackathon / demo
-
-See [`docs/demo-prep.md`](docs/demo-prep.md) for a two-machine checklist and submission talking points (AXL + ENS + 0G alignment). Optional iNFT narrative: [`docs/inft.md`](docs/inft.md).
-
 ## Tooling prerequisites
 
 Local development assumes:
