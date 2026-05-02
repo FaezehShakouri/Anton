@@ -19,8 +19,8 @@ use serde::{Deserialize, Serialize};
 use crate::axl::{DEFAULT_AXL_BRIDGE_URL, DEFAULT_AXL_LISTEN_ADDR};
 use crate::error::Result;
 
-/// Conventional sub-paths inside `app_data_dir/axl/` that the desktop
-/// app, the agent runtime, and the sidecar lifecycle all share.
+/// Conventional sub-paths inside `app_data_dir/axl/` used by the desktop
+/// sidecar lifecycle.
 #[derive(Clone, Debug)]
 pub struct AxlPaths {
     pub axl_dir: PathBuf,
@@ -39,8 +39,7 @@ impl AxlPaths {
     }
 }
 
-/// Runtime configuration for one AXL launch. Owned by whoever spawns
-/// the sidecar (the desktop app or the agent runtime).
+/// Runtime configuration for one AXL launch.
 #[derive(Clone, Debug)]
 pub struct AxlRuntimeConfig {
     pub paths: AxlPaths,

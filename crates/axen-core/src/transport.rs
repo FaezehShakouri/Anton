@@ -86,9 +86,8 @@ impl<'de> Deserialize<'de> for PeerId {
 /// One inbound payload as delivered by [`Transport::recv_stream`].
 ///
 /// `body` is the raw byte payload — for chat traffic it'll be a
-/// MessagePack-encoded `Envelope`; for A2A traffic it'll be a JSON-RPC
-/// message. The `Transport` itself stays oblivious to the payload's
-/// shape.
+/// MessagePack-encoded `Envelope`. The `Transport` itself stays oblivious
+/// to the payload's shape.
 #[derive(Clone, Debug)]
 pub struct Inbound {
     pub from_peer_id: PeerId,

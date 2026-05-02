@@ -50,7 +50,6 @@ pnpm-debug.log*
 
 # Anton runtime artifacts (must never be committed)
 vault.bin
-agent-vault.bin
 settings.json
 node-config.json
 

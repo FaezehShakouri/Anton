@@ -4,7 +4,7 @@ export type EthAddress = `0x${string}`;
 /** Hex-encoded ed25519 public key (the AXL routing address), `0x`-prefixed. */
 export type AxlPeerId = `0x${string}`;
 
-/** ENS name, e.g. `alice.anton.eth` or `oracle.anton.eth`. */
+/** ENS name, e.g. `alice.anton.eth`. */
 export type EnsName = `${string}.anton.eth` | string;
 
 /**
@@ -36,12 +36,3 @@ export interface ResolvedIdentityWire {
   description?: string;
 }
 
-/** Extended identity record published on agent subnames (`*.anton.eth`). */
-export interface AgentIdentity extends Identity {
-  /** JSON describing exposed A2A skills, or a 0G/IPFS pointer. */
-  a2aManifest?: string;
-  /** 32-byte 0G Storage root hash of the latest encrypted memory snapshot. */
-  antonMemoryRoot?: `0x${string}`;
-  /** Optional ERC-7857 token ID (stretch). */
-  inftTokenId?: string;
-}

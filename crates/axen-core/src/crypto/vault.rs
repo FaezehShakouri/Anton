@@ -131,7 +131,7 @@ impl Vault {
     }
 
     /// Encrypt the vault payload to the binary container. Exposed for
-    /// tests and for callers (like the agent runtime) that want to keep
+    /// tests and for callers that want to keep
     /// the bytes in memory rather than touching disk.
     pub fn encode(&self, passphrase: &str, params: KdfParams) -> Result<Vec<u8>> {
         let mut salt = [0u8; 16];

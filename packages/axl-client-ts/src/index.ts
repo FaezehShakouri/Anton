@@ -10,7 +10,6 @@
  *   POST /send       body: payload bytes, headers: X-Destination-Peer-Id
  *   GET  /recv       long-poll; returns a payload + X-From-Peer-Id header
  *   GET  /topology   network info
- *   POST /a2a/{peer} JSON-RPC over A2A (used by the agent surface)
  */
 
 export interface AxlClientOptions {
@@ -124,31 +123,6 @@ export class AxlClient {
     if (!res.ok) throw new AxlHttpError(res.status, await safeReadText(res));
     return (await res.json()) as Topology;
   }
-
-  /**
-   * Issue an A2A JSON-RPC call to a target peer. Used by the desktop "talk
-   * to agent" affordance and by the agent runtime for inter-agent calls.
-   */
-  async a2aCall<TResult = unknown>(
-    targetPeerId: string,
-    method: string,
-    params?: unknown,
-  ): Promise<TResult> {
-    const target = targetPeerId.trim().replace(/^0x/i, "");
-    const res = await this.fetchImpl(`${this.baseUrl}/a2a/${target}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-      signal: this.externalSignal,
-    });
-    if (!res.ok) throw new AxlHttpError(res.status, await safeReadText(res));
-
-    const json = (await res.json()) as JsonRpcResponse<TResult>;
-    if (json.error) {
-      throw new AxlA2aError(json.error.code, json.error.message);
-    }
-    return json.result as TResult;
-  }
 }
 
 export class AxlHttpError extends Error {
@@ -159,23 +133,6 @@ export class AxlHttpError extends Error {
     super(`AXL HTTP ${status}: ${body || "<empty body>"}`);
     this.name = "AxlHttpError";
   }
-}
-
-export class AxlA2aError extends Error {
-  constructor(
-    readonly code: number,
-    message: string,
-  ) {
-    super(`AXL A2A error ${code}: ${message}`);
-    this.name = "AxlA2aError";
-  }
-}
-
-interface JsonRpcResponse<T> {
-  jsonrpc: "2.0";
-  id: number | string;
-  result?: T;
-  error?: { code: number; message: string };
 }
 
 async function safeReadText(res: Response): Promise<string> {

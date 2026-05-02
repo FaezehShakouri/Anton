@@ -6,9 +6,7 @@
 //!
 //! This crate is intentionally process-agnostic: spawning, supervising,
 //! and shutting the sidecar down lives in `apps/desktop/src-tauri/`
-//! (`src/sidecar.rs`) so non-Tauri callers (the headless agent runtime,
-//! integration tests) can reuse the same config + transport without
-//! pulling in Tauri.
+//! (`src/sidecar.rs`).
 
 pub mod config;
 pub mod pem;

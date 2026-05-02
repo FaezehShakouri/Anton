@@ -8,12 +8,10 @@
 //! | POST   | `/send`          | outbound  | body = raw payload bytes; header `X-Destination-Peer-Id: <64-hex>`          |
 //! | GET    | `/recv`          | inbound   | long-poll; 200 = payload + `X-From-Peer-Id`; 204 = idle; reconnect promptly |
 //! | GET    | `/topology`      | probe     | JSON document; we map the relevant fields into [`Topology`]                  |
-//! | POST   | `/a2a/{peer_id}` | a2a       | JSON-RPC over the encrypted mesh — used by the agent runtime                 |
 //!
 //! The transport itself is process-agnostic. Spawning + supervising the
 //! AXL binary lives in the desktop app (`apps/desktop/src-tauri/src/sidecar.rs`)
-//! so the headless agent runtime and integration tests can reuse this
-//! HTTP layer without pulling in Tauri.
+//! so integration tests can reuse this HTTP layer without pulling in Tauri.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -186,54 +184,6 @@ impl AxlHttpClient {
         parse_topology(raw)
     }
 
-    /// `POST /a2a/{peer_id}` — JSON-RPC envelope. Used by the agent
-    /// runtime; the desktop app's "talk to agent" affordance routes
-    /// through this same path.
-    pub async fn a2a_call<T: for<'de> Deserialize<'de>>(
-        &self,
-        peer: &PeerId,
-        method: &str,
-        params: serde_json::Value,
-    ) -> Result<T> {
-        let body = serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": method,
-            "params": params,
-        });
-        let res = self
-            .inner
-            .client
-            .post(format!(
-                "{}/a2a/{}",
-                self.inner.base_url,
-                peer.to_hex_unprefixed()
-            ))
-            .json(&body)
-            .send()
-            .await?;
-        let res = ensure_2xx(res).await?;
-        let raw: serde_json::Value = res.json().await?;
-
-        if let Some(err) = raw.get("error") {
-            let code = err.get("code").and_then(|c| c.as_i64()).unwrap_or(-1);
-            let message = err
-                .get("message")
-                .and_then(|m| m.as_str())
-                .unwrap_or("a2a error")
-                .to_owned();
-            return Err(AntonError::AxlHttp {
-                status: code as u16,
-                message,
-            });
-        }
-
-        let result = raw
-            .get("result")
-            .cloned()
-            .unwrap_or(serde_json::Value::Null);
-        serde_json::from_value(result).map_err(AntonError::Json)
-    }
 }
 
 async fn ensure_2xx(res: reqwest::Response) -> Result<reqwest::Response> {
@@ -824,61 +774,5 @@ mod tests {
         let transport = AxlTransport::new(client_for(&server));
         let topo = transport.topology().await.unwrap();
         assert_eq!(topo.self_peer_id, self_id);
-    }
-
-    #[tokio::test]
-    async fn a2a_call_returns_decoded_result() {
-        let server = mock_server().await;
-        let target = peer(0x99);
-
-        Mock::given(method("POST"))
-            .and(path(format!("/a2a/{}", target.to_hex_unprefixed())))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": 1,
-                "result": { "answer": 42 }
-            })))
-            .mount(&server)
-            .await;
-
-        #[derive(Deserialize)]
-        struct Out {
-            answer: u32,
-        }
-
-        let transport = AxlTransport::new(client_for(&server));
-        let out: Out = transport
-            .client()
-            .a2a_call(&target, "ask", serde_json::json!({"q": "the universe"}))
-            .await
-            .unwrap();
-        assert_eq!(out.answer, 42);
-    }
-
-    #[tokio::test]
-    async fn a2a_call_surfaces_jsonrpc_error() {
-        let server = mock_server().await;
-        let target = peer(0xCC);
-
-        Mock::given(method("POST"))
-            .and(path(format!("/a2a/{}", target.to_hex_unprefixed())))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": 1,
-                "error": { "code": -32601, "message": "method not found" }
-            })))
-            .mount(&server)
-            .await;
-
-        let transport = AxlTransport::new(client_for(&server));
-        let err = transport
-            .client()
-            .a2a_call::<serde_json::Value>(&target, "missing", serde_json::Value::Null)
-            .await
-            .unwrap_err();
-        match err {
-            AntonError::AxlHttp { message, .. } => assert_eq!(message, "method not found"),
-            _ => panic!("unexpected error: {err}"),
-        }
     }
 }

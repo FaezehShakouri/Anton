@@ -680,16 +680,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "anton-agent"
-version = "0.0.0"
-dependencies = [
- "anton-core",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "anton-core"
 version = "0.0.0"
 dependencies = [

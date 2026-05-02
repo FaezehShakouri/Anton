@@ -1,7 +1,7 @@
 //! Anton shared Rust core.
 //!
-//! This crate currently exposes the cryptography and persistence layer used
-//! by both the desktop app and (later) the headless agent runtime:
+//! This crate exposes the cryptography, ENS, AXL, and messaging layers used
+//! by the desktop app:
 //!
 //! * [`crypto::mnemonic`] — BIP39 generation and import.
 //! * [`crypto::wallet`] — secp256k1 wallet derived at `m/44'/60'/0'/0/0`,
@@ -19,10 +19,6 @@
 //! * [`ens`] — L1 ENS via [`ens::EnsResolver`] / [`ens::IdentityResolver`] (Universal Resolver, CCIP-Read; mainnet or Sepolia via env).
 //! * [`messaging`] — wire [`messaging::WireEnvelope`], dual-identity verification,
 //!   [`messaging::MessageDispatcher`] + `chat.text.v1`, and RAM-only [`messaging::Conversations`].
-//!
-//! * [`memory`] — [`memory::MemoryBackend`] + stub [`memory::ZeroGStorageMemory`] for the agent runtime.
-//!
-//! Later plan steps add `inference/` (`Inference`, …).
 
 #![forbid(unsafe_code)]
 #![deny(rust_2018_idioms)]
@@ -31,7 +27,6 @@ pub mod axl;
 pub mod crypto;
 pub mod ens;
 pub mod error;
-pub mod memory;
 pub mod messaging;
 pub mod settings;
 pub mod transport;

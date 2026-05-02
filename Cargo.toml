@@ -1,14 +1,9 @@
 [workspace]
 resolver = "2"
 members = [
-    "apps/agent",
     "apps/desktop/src-tauri",
     "crates/axen-core",
 ]
-
-# Future members:
-#   "crates/anton-zerog"
-#   "crates/anton-inference"
 
 [workspace.package]
 edition = "2021"
