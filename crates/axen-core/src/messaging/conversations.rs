@@ -1,6 +1,6 @@
 //! In-memory per-session conversations (never persisted in v1).
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::ens::normalize_chat_name;
@@ -15,6 +15,14 @@ pub enum MessageState {
     Received,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatReply {
+    pub id: String,
+    pub from: String,
+    pub text: String,
+}
+
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ChatMessage {
@@ -24,6 +32,8 @@ pub struct ChatMessage {
     pub text: String,
     pub ts: u64,
     pub state: MessageState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reply_to: Option<ChatReply>,
 }
 
 /// Messages grouped by the remote ENS name (`alice.anton.eth`).

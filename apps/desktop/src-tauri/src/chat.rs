@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use anton_core::crypto::eip712::{sign_envelope, EnvelopeFields};
 use anton_core::ens::{normalize_chat_name, IdentityResolver, ResolvedIdentity};
-use anton_core::messaging::{chat_text_v1_body_json, ChatMessage, MessageState, WireEnvelope};
+use anton_core::messaging::{chat_text_v1_body_json, ChatMessage, ChatReply, MessageState, WireEnvelope};
 use anton_core::settings::Settings;
 use anton_core::transport::{PeerId, Transport};
 use parking_lot::Mutex;
@@ -167,6 +167,7 @@ pub async fn chat_send<R: Runtime>(
     sidecar_state: State<'_, AxlSidecarState>,
     to: String,
     text: String,
+    reply_to: Option<ChatReply>,
 ) -> Result<ChatSendResponse, String> {
     let Some(unlocked) = session.snapshot() else {
         return Err("Unlock your vault before sending messages.".into());
@@ -204,7 +205,7 @@ pub async fn chat_send<R: Runtime>(
         n
     };
 
-    let body = chat_text_v1_body_json(&text);
+    let body = chat_text_v1_body_json(&text, reply_to.as_ref());
     let body_vec = serde_json::to_vec(&body).map_err(|e| e.to_string())?;
 
     let fields = EnvelopeFields {
@@ -240,6 +241,7 @@ pub async fn chat_send<R: Runtime>(
             text: text.clone(),
             ts,
             state: MessageState::Pending,
+            reply_to,
         };
         g.conversations.append_message(&to_key, pending);
     }

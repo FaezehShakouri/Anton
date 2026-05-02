@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::error::{AntonError, Result};
+use crate::messaging::conversations::ChatReply;
 
 /// JSON-shaped envelope as produced/consumed by the desktop IPC layer and (eventually) the AXL bridge.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -35,8 +36,11 @@ impl WireEnvelope {
 }
 
 /// Build the JSON body for `chat.text.v1` (matches TS `ChatTextV1Body`).
-pub fn chat_text_v1_body_json(text: impl Into<String>) -> serde_json::Value {
-    json!({ "text": text.into() })
+pub fn chat_text_v1_body_json(text: impl Into<String>, reply_to: Option<&ChatReply>) -> serde_json::Value {
+    match reply_to {
+        Some(reply_to) => json!({ "text": text.into(), "replyTo": reply_to }),
+        None => json!({ "text": text.into() }),
+    }
 }
 
 fn parse_hex_sig(s: &str) -> Result<[u8; 65]> {

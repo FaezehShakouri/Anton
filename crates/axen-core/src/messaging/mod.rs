@@ -6,7 +6,7 @@ mod envelope;
 mod identity_wire;
 mod inbound;
 
-pub use conversations::{ChatMessage, Conversations, MessageState};
+pub use conversations::{ChatMessage, ChatReply, Conversations, MessageState};
 pub use dispatch::{
     ingest_verified_inbound, verify_transport_matches_ens, verify_wallet_signature, ChatTextV1Handler,
     DispatchContext, MessageDispatcher, MessageHandler, MessagingEvent,

@@ -40,6 +40,13 @@ export interface Envelope<TBody = unknown> {
 /** Body payload for `chat.text.v1`. */
 export interface ChatTextV1Body {
   text: string;
+  replyTo?: ChatReply;
+}
+
+export interface ChatReply {
+  id: string;
+  from: EnsName;
+  text: string;
 }
 
 /**
@@ -59,6 +66,7 @@ export interface ChatMessage {
   text: string;
   ts: number;
   state: MessageState;
+  replyTo?: ChatReply;
 }
 
 /** IPC JSON envelope + hex signature (`camelCase`); mirrors Rust `WireEnvelope`. */

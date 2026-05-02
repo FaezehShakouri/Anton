@@ -1,4 +1,4 @@
-import type { ChatMessage, WireEnvelope } from "./envelope";
+import type { ChatMessage, ChatReply, WireEnvelope } from "./envelope";
 import type { EnsName, Identity, ResolvedIdentityWire } from "./identity";
 
 /**
@@ -95,7 +95,7 @@ export interface TauriCommands {
     returns: void;
   };
   chat_send: {
-    args: { to: EnsName; text: string };
+    args: { to: EnsName; text: string; replyTo?: ChatReply };
     returns: { id: string };
   };
   chat_history: {

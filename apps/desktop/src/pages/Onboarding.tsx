@@ -209,6 +209,11 @@ export function OnboardingPage() {
             autoComplete="current-password"
             value={unlockPass}
             onChange={(e) => setUnlockPass(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && unlockPass && !busy) {
+                void handleUnlock();
+              }
+            }}
             className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-emerald-600"
           />
         </label>

@@ -8,7 +8,7 @@ use serde::Serialize;
 use crate::crypto::eip712::verify_envelope;
 use crate::ens::{normalize_chat_name, ResolvedIdentity};
 use crate::error::{AntonError, Result};
-use crate::messaging::conversations::{ChatMessage, Conversations, MessageState};
+use crate::messaging::conversations::{ChatMessage, ChatReply, Conversations, MessageState};
 use crate::messaging::envelope::WireEnvelope;
 use crate::transport::PeerId;
 
@@ -82,6 +82,13 @@ impl MessageHandler for ChatTextV1Handler {
             .ok_or_else(|| {
                 AntonError::InvalidEnvelopeBody("chat.text.v1 body missing string field `text`".into())
             })?;
+        let reply_to = envelope
+            .body
+            .get("replyTo")
+            .cloned()
+            .map(serde_json::from_value::<ChatReply>)
+            .transpose()
+            .map_err(|e| AntonError::InvalidEnvelopeBody(format!("invalid replyTo: {e}")))?;
         let peer = Conversations::conversation_key_from_inbound(&envelope.from);
         let id = format!("{}:{}:{}", peer, envelope.nonce, envelope.ts);
         let msg = ChatMessage {
@@ -91,6 +98,7 @@ impl MessageHandler for ChatTextV1Handler {
             text: text.to_string(),
             ts: envelope.ts,
             state: MessageState::Received,
+            reply_to,
         };
         ctx.conversations.append_message(&peer, msg.clone());
         Ok(vec![MessagingEvent::ChatMessageReceived { peer, message: msg }])
@@ -176,7 +184,7 @@ mod tests {
             avatar: None,
             description: None,
         };
-        let body = chat_text_v1_body_json("hello");
+        let body = chat_text_v1_body_json("hello", None);
         let body_vec = serde_json::to_vec(&body).unwrap();
         let fields = EnvelopeFields {
             from: "alice.anton.eth",
@@ -215,7 +223,7 @@ mod tests {
             avatar: None,
             description: None,
         };
-        let body = chat_text_v1_body_json("a");
+        let body = chat_text_v1_body_json("a", None);
         let body_vec = serde_json::to_vec(&body).unwrap();
         let mk_env = |nonce: u64| {
             let fields = EnvelopeFields {
@@ -257,7 +265,7 @@ mod tests {
             avatar: None,
             description: None,
         };
-        let body = chat_text_v1_body_json("x");
+        let body = chat_text_v1_body_json("x", None);
         let body_vec = serde_json::to_vec(&body).unwrap();
         let fields = EnvelopeFields {
             from: "alice.anton.eth",

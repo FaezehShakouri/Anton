@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { useNavigate, useParams } from "react-router-dom";
-import type { ChatMessage } from "@anton/shared-types";
+import type { ChatMessage, ChatReply } from "@anton/shared-types";
 import { ipc } from "../lib/ipc";
 import { cn } from "../lib/cn";
 
@@ -13,6 +13,14 @@ type Resolved = {
   avatar?: string;
   description?: string;
 };
+
+function toReply(message: ChatMessage): ChatReply {
+  return {
+    id: message.id,
+    from: message.from,
+    text: message.text.length > 160 ? `${message.text.slice(0, 157)}...` : message.text,
+  };
+}
 
 export function ChatPage() {
   const { ens: routeEns } = useParams<{ ens: string }>();
@@ -27,9 +35,11 @@ export function ChatPage() {
   const [activeEns, setActiveEns] = useState<string | null>(routeEns ?? null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
+  const [replyTo, setReplyTo] = useState<ChatReply | null>(null);
   const [sendBusy, setSendBusy] = useState(false);
   const [ensUpdateBusy, setEnsUpdateBusy] = useState(false);
   const [ensUpdateStatus, setEnsUpdateStatus] = useState<string | null>(null);
+  const messageEndRef = useRef<HTMLDivElement | null>(null);
 
   const activeNorm = useMemo(
     () => (activeEns ? activeEns.trim().toLowerCase() : null),
@@ -52,6 +62,7 @@ export function ChatPage() {
   useEffect(() => {
     if (!activeNorm) {
       setMessages([]);
+      setReplyTo(null);
       return;
     }
     void (async () => {
@@ -65,6 +76,10 @@ export function ChatPage() {
   }, [activeNorm, refreshMessages]);
 
   useEffect(() => {
+    messageEndRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
+  }, [messages, activeNorm]);
+
+  useEffect(() => {
     const unlisten = listen<{ peer: string; message: ChatMessage }>("chat:message-received", (ev) => {
       const peer = ev.payload?.peer?.toLowerCase();
       if (!peer) return;
@@ -73,6 +88,7 @@ export function ChatPage() {
         try {
           const opened = await ipc("chat_open", { ens: peer });
           setActiveEns(peer);
+          setReplyTo(null);
           navigate(`/chat/${encodeURIComponent(peer)}`);
           setMessages(opened.messages);
         } catch {
@@ -110,6 +126,7 @@ export function ChatPage() {
     const n = ens.trim().toLowerCase();
     setSessions((s) => (s.includes(n) ? s : [...s, n]));
     setActiveEns(n);
+    setReplyTo(null);
     navigate(`/chat/${encodeURIComponent(n)}`);
     await ipc("chat_open", { ens: n });
     await refreshMessages(n);
@@ -121,6 +138,7 @@ export function ChatPage() {
     setSessions((s) => s.filter((x) => x !== n));
     if (activeNorm === n) {
       setActiveEns(null);
+      setReplyTo(null);
       navigate("/chat");
       setMessages([]);
     }
@@ -130,8 +148,13 @@ export function ChatPage() {
     if (!activeNorm || !draft.trim()) return;
     setSendBusy(true);
     try {
-      await ipc("chat_send", { to: activeNorm, text: draft.trim() });
+      await ipc("chat_send", {
+        to: activeNorm,
+        text: draft.trim(),
+        ...(replyTo ? { replyTo } : {}),
+      });
       setDraft("");
+      setReplyTo(null);
       await refreshMessages(activeNorm);
     } catch (e) {
       await refreshMessages(activeNorm);
@@ -263,12 +286,41 @@ export function ChatPage() {
                 <p className="text-xs text-slate-500">
                   {m.state} · {new Date(Number(m.ts)).toLocaleString()}
                 </p>
+                {m.replyTo ? (
+                  <div className="mt-2 rounded border-l-2 border-emerald-400/60 bg-black/20 px-2 py-1 text-xs text-slate-300">
+                    <p className="font-mono text-[10px] text-slate-500">Reply to {m.replyTo.from}</p>
+                    <p className="mt-0.5 line-clamp-2 whitespace-pre-wrap">{m.replyTo.text}</p>
+                  </div>
+                ) : null}
                 <p className="mt-1 whitespace-pre-wrap">{m.text}</p>
+                <button
+                  type="button"
+                  onClick={() => setReplyTo(toReply(m))}
+                  className="mt-2 text-[10px] font-medium text-slate-400 hover:text-slate-100"
+                >
+                  Reply
+                </button>
               </div>
             ))}
+            <div ref={messageEndRef} />
           </div>
         </div>
         <footer className="border-t border-slate-800 p-3">
+          {replyTo ? (
+            <div className="mb-2 flex items-start justify-between gap-3 rounded-md border border-slate-800 bg-slate-900/70 px-3 py-2 text-xs">
+              <div className="min-w-0">
+                <p className="font-mono text-slate-500">Replying to {replyTo.from}</p>
+                <p className="mt-1 truncate text-slate-300">{replyTo.text}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setReplyTo(null)}
+                className="shrink-0 text-slate-500 hover:text-slate-200"
+              >
+                Cancel
+              </button>
+            </div>
+          ) : null}
           <div className="flex gap-2">
             <input
               type="text"
