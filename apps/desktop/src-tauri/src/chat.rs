@@ -94,11 +94,26 @@ pub async fn ens_resolve(
     resolver: State<'_, ResolverState>,
     name: String,
 ) -> Result<IdentityIpc, String> {
+    let trimmed = name.trim();
+    tracing::debug!(target = "anton::chat", requested = trimmed, "ens_resolve:begin");
     let id = resolver
         .0
-        .resolve_forward(name.trim())
+        .resolve_forward(trimmed)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            tracing::debug!(
+                target = "anton::chat",
+                requested = trimmed,
+                error = %e,
+                "ens_resolve:error",
+            );
+            e.to_string()
+        })?;
+    tracing::debug!(
+        target = "anton::chat",
+        resolved_ens = id.ens.as_str(),
+        "ens_resolve:ok",
+    );
     Ok(IdentityIpc::from(&id))
 }
 

@@ -82,10 +82,13 @@ export function ChatPage() {
     setResolveError(null);
     setResolved(null);
     try {
+      console.debug("[Chat] ens_resolve request", name);
       const id = await ipc("ens_resolve", { name });
       setResolved(id as Resolved);
     } catch (e) {
-      setResolveError(e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? e.message : String(e);
+      console.warn("[Chat] ens_resolve failed", name, msg);
+      setResolveError(msg);
     } finally {
       setResolving(false);
     }

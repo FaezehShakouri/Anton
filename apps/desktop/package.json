@@ -9,9 +9,9 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "tauri": "tauri",
-    "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri": "node ./scripts/tauri-with-workspace-target.mjs",
+    "tauri:dev": "node ./scripts/tauri-with-workspace-target.mjs dev",
+    "tauri:build": "node ./scripts/tauri-with-workspace-target.mjs build"
   },
   "dependencies": {
     "@anton/axl-client": "workspace:*",

@@ -37,6 +37,8 @@ contract ChatRegistrar is L2Registrar {
         bytes32 node = reg.makeNode(reg.baseNode(), label);
         bytes memory packedOwner = abi.encodePacked(owner_);
 
+        // Same ordering as Durin `L2Registrar.register`: resolver fields exist on the computed
+        // node before ERC721 mint, so CCIP gateways read consistent L2 state.
         reg.setAddr(node, coinType, packedOwner);
         reg.setAddr(node, 60, packedOwner);
         reg.setText(node, "axl_peer_id", Hex.bytesToHexPrefixed(peerId));

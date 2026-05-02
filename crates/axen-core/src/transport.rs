@@ -40,6 +40,11 @@ impl PeerId {
         format!("0x{}", hex::encode(self.0))
     }
 
+    /// Lowercase hex without `0x`, for protocol boundaries that expect raw hex.
+    pub fn to_hex_unprefixed(&self) -> String {
+        hex::encode(self.0)
+    }
+
     /// Parse a `0x…`/`…` lowercase or mixed-case hex peer id.
     pub fn from_hex(s: &str) -> Result<Self> {
         let trimmed = s.strip_prefix("0x").unwrap_or(s);

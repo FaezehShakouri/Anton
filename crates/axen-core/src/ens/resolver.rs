@@ -13,11 +13,28 @@ use alloy::ens::{
 use alloy::network::Ethereum;
 use alloy::primitives::{Address, Bytes};
 use alloy::providers::{Provider, ProviderBuilder};
-use alloy::sol_types::SolCall;
+use alloy::rpc::types::{TransactionInput, TransactionRequest};
+use alloy::sol_types::{SolCall, SolError, SolValue};
 use async_trait::async_trait;
 use moka::sync::Cache;
+use serde::Deserialize;
 
 use crate::error::{AntonError, Result};
+
+alloy::sol! {
+    error OffchainLookup(
+        address sender,
+        string[] urls,
+        bytes callData,
+        bytes4 callbackFunction,
+        bytes extraData
+    );
+}
+
+const ENS_RESOLUTION_HINT: &str = "\
+(Hint: use full name like name.anton.eth or a bare username; ENS_RPC_URL must point at Ethereum \
+L1 with CCIP-ready Universal Resolver — not an L2 JSON-RPC URL; if you just redeployed the \
+registrar, register again after fixing ChatRegistrar ordering: setAddr/setText before createSubnode.)";
 
 /// Configuration for [`EnsResolver`] in-memory caches (LRU + TTL).
 #[derive(Clone, Debug)]
@@ -81,6 +98,19 @@ pub fn normalize_chat_name(name: &str) -> String {
         .map(|l| l.to_ascii_lowercase())
         .collect::<Vec<_>>()
         .join(".")
+}
+
+/// Expand user input into the ENS name Universal Resolver resolves: a bare label becomes
+/// `<label>.anton.eth` ([`normalize_chat_name`] preserves multi-label inputs as-is).
+pub fn effective_chat_resolve_name(name: &str) -> String {
+    let n = normalize_chat_name(name);
+    if n.contains('.') {
+        return n;
+    }
+    if n.is_empty() {
+        return n;
+    }
+    format!("{n}.anton.eth")
 }
 
 /// Validate `axl_peer_id` format: optional `0x` prefix, exactly 32 bytes (64 hex chars).
@@ -167,7 +197,14 @@ where
 
     /// Forward resolve: `addr(60)` + Anton text records via Universal Resolver (CCIP-aware).
     pub async fn resolve_forward(&self, name: &str) -> Result<ResolvedIdentity> {
-        let key = normalize_chat_name(name);
+        let key = effective_chat_resolve_name(name);
+        let requested = normalize_chat_name(name);
+        tracing::debug!(
+            target = "anton_core::ens",
+            requested = requested.as_str(),
+            resolving = key.as_str(),
+            "resolve_forward",
+        );
         if key.is_empty() {
             return Err(AntonError::EnsEmptyName);
         }
@@ -195,6 +232,14 @@ where
         universal_resolver: Address,
         normalized_name: &str,
     ) -> Result<ResolvedIdentity> {
+        tracing::debug!(
+            target = "anton_core::ens",
+            name = normalized_name,
+            node_hex = %hex::encode(namehash(normalized_name).as_slice()),
+            ur = universal_resolver.to_checksum(None),
+            "fetch_identity:addr_then_text",
+        );
+
         let wallet =
             resolve_addr_60_universal(provider, universal_resolver, normalized_name).await?;
 
@@ -285,14 +330,30 @@ async fn resolve_addr_60_universal<P: Provider<Ethereum>>(
     let addr_call = EnsResolverSol::addrCall { node };
     let call_data = Bytes::from(EnsResolverSol::addrCall::abi_encode(&addr_call));
 
-    let ur = UniversalResolver::new(universal_resolver, provider);
-    let result = ur
-        .resolve(Bytes::from(dns_name), call_data)
-        .call()
-        .await
-        .map_err(|e| AntonError::EnsResolution(format!("universal resolve addr(60): {e}")))?;
+    tracing::trace!(
+        target = "anton_core::ens",
+        dns_len = dns_name.len(),
+        universal_resolver = universal_resolver.to_checksum(None),
+        "resolve_addr_60_universal:call"
+    );
 
-    let result_bytes = result._0;
+    let result = universal_resolve(provider, universal_resolver, Bytes::from(dns_name), call_data)
+        .await
+        .map_err(|e| {
+            tracing::debug!(
+                target = "anton_core::ens",
+                name=%name,
+                universal_resolver=?universal_resolver,
+                error=?e,
+                "resolve_addr_60_universal:revert_or_rpc_error",
+            );
+            AntonError::EnsResolution(format!(
+                "universal resolve addr(60): {e} {}",
+                ENS_RESOLUTION_HINT
+            ))
+        })?;
+
+    let result_bytes = result;
     if result_bytes.len() < 32 {
         return Err(AntonError::EnsResolution(format!(
             "resolver returned short addr bytes for {name}"
@@ -316,14 +377,11 @@ async fn resolve_text_universal<P: Provider<Ethereum>>(
     };
     let call_data = Bytes::from(EnsResolverSol::textCall::abi_encode(&call));
 
-    let ur = UniversalResolver::new(universal_resolver, provider);
-    let result = ur
-        .resolve(Bytes::from(dns_name), call_data)
-        .call()
+    let result = universal_resolve(provider, universal_resolver, Bytes::from(dns_name), call_data)
         .await
         .map_err(|e| AntonError::EnsResolution(format!("universal resolve text {key}: {e}")))?;
 
-    EnsResolverSol::textCall::abi_decode_returns(&result._0)
+    EnsResolverSol::textCall::abi_decode_returns(&result)
         .map_err(|e| AntonError::EnsResolution(format!("decode text {key}: {e}")))
 }
 
@@ -334,13 +392,10 @@ async fn reverse_primary_universal<P: Provider<Ethereum>>(
 ) -> Result<Option<String>> {
     let rev_name = reverse_address(address);
     let dns = dns_encode(&rev_name);
-    let ur = UniversalResolver::new(universal_resolver, provider);
-    let out = ur
-        .reverse(Bytes::from(dns))
-        .call()
+    let out = universal_reverse(provider, universal_resolver, Bytes::from(dns))
         .await
         .map_err(|e| AntonError::EnsReverseResolution(e.to_string()))?;
-    let primary = out._0;
+    let primary = out;
     Ok(if primary.is_empty() {
         None
     } else {
@@ -355,6 +410,184 @@ fn nonempty_opt(s: String) -> Option<String> {
     } else {
         Some(t.to_string())
     }
+}
+
+async fn universal_resolve<P: Provider<Ethereum>>(
+    provider: &P,
+    universal_resolver: Address,
+    dns_name: Bytes,
+    resolver_call_data: Bytes,
+) -> Result<Bytes> {
+    let call = UniversalResolver::resolveCall {
+        name: dns_name,
+        data: resolver_call_data,
+    };
+    let output =
+        call_universal_with_ccip(provider, universal_resolver, Bytes::from(call.abi_encode()))
+            .await?;
+    let decoded = UniversalResolver::resolveCall::abi_decode_returns(&output)
+        .map_err(|e| AntonError::EnsResolution(format!("decode universal resolve: {e}")))?;
+    Ok(decoded._0)
+}
+
+async fn universal_reverse<P: Provider<Ethereum>>(
+    provider: &P,
+    universal_resolver: Address,
+    reverse_name: Bytes,
+) -> Result<String> {
+    let call = UniversalResolver::reverseCall {
+        reverseName: reverse_name,
+    };
+    let output =
+        call_universal_with_ccip(provider, universal_resolver, Bytes::from(call.abi_encode()))
+            .await?;
+    let decoded = UniversalResolver::reverseCall::abi_decode_returns(&output)
+        .map_err(|e| AntonError::EnsReverseResolution(format!("decode universal reverse: {e}")))?;
+    Ok(decoded._0)
+}
+
+async fn call_universal_with_ccip<P: Provider<Ethereum>>(
+    provider: &P,
+    universal_resolver: Address,
+    input: Bytes,
+) -> Result<Bytes> {
+    const MAX_CCIP_REDIRECTS: usize = 10;
+
+    let mut input = input;
+    for attempt in 0..=MAX_CCIP_REDIRECTS {
+        let tx = TransactionRequest::default()
+            .to(universal_resolver)
+            .input(TransactionInput::both(input.clone()));
+
+        match provider.call(tx).await {
+            Ok(output) => return Ok(output),
+            Err(err) => {
+                if attempt == MAX_CCIP_REDIRECTS {
+                    return Err(AntonError::EnsResolution(
+                        "CCIP-Read exceeded maximum redirects".into(),
+                    ));
+                }
+
+                let Some(offchain) = offchain_lookup_from_error(&err) else {
+                    return Err(AntonError::EnsResolution(err.to_string()));
+                };
+
+                if offchain.sender != universal_resolver {
+                    return Err(AntonError::EnsResolution(format!(
+                        "CCIP-Read sender mismatch: expected {}, got {}",
+                        universal_resolver.to_checksum(None),
+                        offchain.sender.to_checksum(None),
+                    )));
+                }
+
+                let gateway_data =
+                    fetch_ccip_gateway(&offchain.sender, &offchain.callData, &offchain.urls)
+                        .await?;
+                let callback_args = (gateway_data, offchain.extraData).abi_encode_params();
+                let mut callback_input = offchain.callbackFunction.to_vec();
+                callback_input.extend_from_slice(&callback_args);
+                input = Bytes::from(callback_input);
+            }
+        }
+    }
+
+    Err(AntonError::EnsResolution(
+        "CCIP-Read exceeded maximum redirects".into(),
+    ))
+}
+
+fn offchain_lookup_from_error<E, R>(
+    err: &alloy::transports::RpcError<E, R>,
+) -> Option<OffchainLookup>
+where
+    R: std::borrow::Borrow<serde_json::value::RawValue>,
+{
+    let payload = err.as_error_resp()?;
+    let data = payload.as_revert_data()?;
+    OffchainLookup::abi_decode(&data).ok()
+}
+
+#[derive(Debug, Deserialize)]
+struct CcipGatewayResponse {
+    data: Option<String>,
+    message: Option<String>,
+}
+
+async fn fetch_ccip_gateway(
+    sender: &Address,
+    call_data: &Bytes,
+    urls: &[String],
+) -> Result<Bytes> {
+    if urls.is_empty() {
+        return Err(AntonError::EnsResolution(
+            "CCIP-Read OffchainLookup did not include gateway URLs".into(),
+        ));
+    }
+
+    let sender_hex = format!("{sender:#x}");
+    let data_hex = format!("0x{}", hex::encode(call_data));
+    let client = reqwest::Client::new();
+    let mut errors = Vec::new();
+
+    for template in urls {
+        let response = if template.contains("{sender}") || template.contains("{data}") {
+            let url = template
+                .replace("{sender}", &sender_hex)
+                .replace("{data}", &data_hex);
+            client.get(&url).send().await
+        } else {
+            client
+                .post(template)
+                .json(&serde_json::json!({
+                    "sender": sender_hex,
+                    "data": data_hex,
+                }))
+                .send()
+                .await
+        };
+
+        let response = match response {
+            Ok(r) => r,
+            Err(e) => {
+                errors.push(format!("{template}: {e}"));
+                continue;
+            }
+        };
+
+        if !response.status().is_success() {
+            errors.push(format!("{template}: HTTP {}", response.status()));
+            continue;
+        }
+
+        match response.json::<CcipGatewayResponse>().await {
+            Ok(body) => {
+                if let Some(data) = body.data {
+                    return decode_hex_bytes(&data).map_err(|e| {
+                        AntonError::EnsResolution(format!("{template}: invalid CCIP data: {e}"))
+                    });
+                }
+                errors.push(format!(
+                    "{template}: {}",
+                    body.message.unwrap_or_else(|| "missing data field".into())
+                ));
+            }
+            Err(e) => errors.push(format!("{template}: invalid JSON response: {e}")),
+        }
+    }
+
+    Err(AntonError::EnsResolution(format!(
+        "CCIP-Read gateway fetch failed ({})",
+        errors.join("; ")
+    )))
+}
+
+fn decode_hex_bytes(s: &str) -> std::result::Result<Bytes, hex::FromHexError> {
+    let hex_part = s
+        .trim()
+        .strip_prefix("0x")
+        .or_else(|| s.trim().strip_prefix("0X"))
+        .unwrap_or_else(|| s.trim());
+    hex::decode(hex_part).map(Bytes::from)
 }
 
 /// Default JSON-RPC for Ethereum mainnet (ENS production).
@@ -402,6 +635,11 @@ mod tests {
             normalize_chat_name("  Alice.ANTON.eth "),
             "alice.anton.eth"
         );
+    }
+
+    #[test]
+    fn effective_expands_single_label_under_anton_eth() {
+        assert_eq!(effective_chat_resolve_name("  Alice "), "alice.anton.eth");
     }
 
     #[test]

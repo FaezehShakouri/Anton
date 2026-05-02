@@ -57,13 +57,16 @@ export class AxlClient {
 
   /** Send a binary payload to a destination peer. */
   async send(destinationPeerId: string, body: Uint8Array): Promise<void> {
+    const destination = destinationPeerId.trim().replace(/^0x/i, "");
+    const payload = new ArrayBuffer(body.byteLength);
+    new Uint8Array(payload).set(body);
     const res = await this.fetchImpl(`${this.baseUrl}/send`, {
       method: "POST",
       headers: {
         "Content-Type": "application/octet-stream",
-        "X-Destination-Peer-Id": destinationPeerId,
+        "X-Destination-Peer-Id": destination,
       },
-      body,
+      body: payload,
       signal: this.externalSignal,
     });
     if (!res.ok) {
@@ -131,7 +134,8 @@ export class AxlClient {
     method: string,
     params?: unknown,
   ): Promise<TResult> {
-    const res = await this.fetchImpl(`${this.baseUrl}/a2a/${targetPeerId}`, {
+    const target = targetPeerId.trim().replace(/^0x/i, "");
+    const res = await this.fetchImpl(`${this.baseUrl}/a2a/${target}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),

@@ -16,6 +16,15 @@ use chat::{ChatState, ResolverState};
 
 pub use sidecar::{AxlSidecar, AxlSidecarState, SidecarError};
 
+/// Truncate URLs for tracing only (avoid logging full URLs with long query strings).
+fn truncate_rpc_for_log(url: &str) -> std::borrow::Cow<'_, str> {
+    const MAX: usize = 64;
+    if url.len() <= MAX {
+        return std::borrow::Cow::Borrowed(url);
+    }
+    std::borrow::Cow::Owned(format!("{}… ({} chars)", &url[..MAX], url.len()))
+}
+
 /// Returns the version string baked in at compile time.
 #[tauri::command]
 fn app_version() -> &'static str {
@@ -45,7 +54,14 @@ pub fn run() {
                 "anton desktop starting"
             );
             let (rpc, ens_config) = anton_core::ens::ens_rpc_and_resolver_config();
-            match anton_core::ens::connect_http(&rpc, ens_config) {
+            tracing::debug!(
+                target = "anton::ens",
+                ens_rpc_preview = %truncate_rpc_for_log(&rpc),
+                universal_resolver = ens_config.universal_resolver.to_checksum(None),
+                cache_ttl_secs = ens_config.cache_ttl.as_secs(),
+                "ens resolver connecting",
+            );
+            match anton_core::ens::connect_http(&rpc, ens_config.clone()) {
                 Ok(r) => {
                     let resolver: std::sync::Arc<dyn anton_core::ens::IdentityResolver> =
                         std::sync::Arc::new(r);

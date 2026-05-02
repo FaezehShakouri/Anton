@@ -1,0 +1,5 @@
+# Keep build artifacts inside this workspace. A misplaced global `CARGO_TARGET_DIR`
+# (for example pointing at another repo) breaks Tauri’s codegen and resolves deps
+# from the wrong tree.
+[build]
+target-dir = "target"

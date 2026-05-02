@@ -9,6 +9,6 @@ mod resolver;
 
 pub use bootstrap::fetch_axl_bootstrap_peers;
 pub use resolver::{
-    connect_http, ens_rpc_and_resolver_config, normalize_chat_name, parse_axl_peer_hex,
-    EnsResolver, EnsResolverConfig, IdentityResolver, ResolvedIdentity,
+    connect_http, effective_chat_resolve_name, ens_rpc_and_resolver_config, normalize_chat_name,
+    parse_axl_peer_hex, EnsResolver, EnsResolverConfig, IdentityResolver, ResolvedIdentity,
 };

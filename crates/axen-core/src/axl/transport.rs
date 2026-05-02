@@ -5,7 +5,7 @@
 //!
 //! | Method | Path             | Direction | Notes                                                                       |
 //! |--------|------------------|-----------|-----------------------------------------------------------------------------|
-//! | POST   | `/send`          | outbound  | body = raw payload bytes; header `X-Destination-Peer-Id: <hex>`             |
+//! | POST   | `/send`          | outbound  | body = raw payload bytes; header `X-Destination-Peer-Id: <64-hex>`          |
 //! | GET    | `/recv`          | inbound   | long-poll; 200 = payload + `X-From-Peer-Id`; 204 = idle; reconnect promptly |
 //! | GET    | `/topology`      | probe     | JSON document; we map the relevant fields into [`Topology`]                  |
 //! | POST   | `/a2a/{peer_id}` | a2a       | JSON-RPC over the encrypted mesh — used by the agent runtime                 |
@@ -123,7 +123,7 @@ impl AxlHttpClient {
         );
         headers.insert(
             DESTINATION_HEADER,
-            HeaderValue::from_str(&to.to_hex())
+            HeaderValue::from_str(&to.to_hex_unprefixed())
                 .map_err(|e| AntonError::Transport(format!("destination header: {e}")))?,
         );
 
@@ -204,7 +204,11 @@ impl AxlHttpClient {
         let res = self
             .inner
             .client
-            .post(format!("{}/a2a/{}", self.inner.base_url, peer.to_hex()))
+            .post(format!(
+                "{}/a2a/{}",
+                self.inner.base_url,
+                peer.to_hex_unprefixed()
+            ))
             .json(&body)
             .send()
             .await?;
@@ -521,7 +525,7 @@ mod tests {
 
         Mock::given(method("POST"))
             .and(path("/send"))
-            .and(header(DESTINATION_HEADER, dest.to_hex().as_str()))
+            .and(header(DESTINATION_HEADER, dest.to_hex_unprefixed().as_str()))
             .and(header(CONTENT_TYPE.as_str(), "application/octet-stream"))
             .respond_with(ResponseTemplate::new(200))
             .mount(&server)
@@ -766,7 +770,7 @@ mod tests {
         let target = peer(0x99);
 
         Mock::given(method("POST"))
-            .and(path(format!("/a2a/{}", target.to_hex())))
+            .and(path(format!("/a2a/{}", target.to_hex_unprefixed())))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "jsonrpc": "2.0",
                 "id": 1,
@@ -795,7 +799,7 @@ mod tests {
         let target = peer(0xCC);
 
         Mock::given(method("POST"))
-            .and(path(format!("/a2a/{}", target.to_hex())))
+            .and(path(format!("/a2a/{}", target.to_hex_unprefixed())))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "jsonrpc": "2.0",
                 "id": 1,
