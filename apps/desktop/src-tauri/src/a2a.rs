@@ -19,7 +19,7 @@ use crate::agent;
 use crate::chat::ResolverState;
 use crate::sidecar::AxlSidecarState;
 
-const SERVICE_NAME: &str = "anton_agent";
+const SERVICE_NAME: &str = "son_of_anton";
 
 #[derive(Default)]
 pub struct A2aServiceState {
