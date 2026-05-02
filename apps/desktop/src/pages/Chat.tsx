@@ -236,6 +236,10 @@ export function ChatPage() {
   };
 
   const formatA2aResponse = (tool: A2aTool, response: unknown): string => {
+    if (typeof response === "object" && response !== null && "error" in response) {
+      const error = (response as { error?: { message?: string } }).error;
+      return `Remote A2A failed: ${error?.message ?? JSON.stringify(error)}`;
+    }
     const text =
       typeof response === "object" && response !== null
         ? (((response as { result?: { message?: { parts?: Array<{ text?: unknown }> } } }).result?.message?.parts?.[0]
@@ -251,6 +255,10 @@ export function ChatPage() {
       typeof parsed === "object" && parsed !== null && "result" in parsed
         ? (parsed as { result?: unknown }).result
         : parsed;
+    if (typeof parsed === "object" && parsed !== null && "error" in parsed) {
+      const error = (parsed as { error?: { message?: string } }).error;
+      return `Remote ${tool} failed: ${error?.message ?? JSON.stringify(error)}`;
+    }
     if (tool === "draft_reply" && typeof result === "object" && result !== null && "text" in result) {
       return `Remote draft: ${(result as { text?: string }).text ?? ""}`;
     }
@@ -261,7 +269,11 @@ export function ChatPage() {
       return "Remote agent switched to human handoff.";
     }
     if (tool === "send_reply") {
-      return "Remote agent sent a signed reply.";
+      const messageId =
+        typeof result === "object" && result !== null && "id" in result ? (result as { id?: string }).id : null;
+      return messageId
+        ? `Remote agent sent signed reply ${messageId}. Waiting for AXL delivery…`
+        : "Remote agent sent a signed reply. Waiting for AXL delivery…";
     }
     return typeof result === "string" ? result : JSON.stringify(result);
   };
@@ -281,6 +293,12 @@ export function ChatPage() {
       setA2aStatus(formatA2aResponse(tool, res.response));
       if (tool === "send_reply") {
         await refreshMessages(activeNorm);
+        window.setTimeout(() => {
+          void refreshMessages(activeNorm);
+        }, 1_500);
+        window.setTimeout(() => {
+          void refreshMessages(activeNorm);
+        }, 4_000);
       }
     } catch (e) {
       setA2aStatus(e instanceof Error ? e.message : String(e));
