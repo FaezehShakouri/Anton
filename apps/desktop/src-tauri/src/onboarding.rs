@@ -1,10 +1,11 @@
-//! Onboarding IPC: mnemonic lifecycle, vault, AXL boot, ChatRegistrar on Base Sepolia.
+//! Onboarding IPC: mnemonic lifecycle, vault, AXL boot, direct ENS registration on Sepolia.
 
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use alloy::primitives::{Address, Bytes};
+use alloy::ens::namehash;
+use alloy::primitives::{keccak256, Address, Bytes, B256, U256};
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::signers::Signer;
 use alloy::signers::local::PrivateKeySigner;
@@ -21,14 +22,42 @@ use tauri::State;
 use crate::session::{IdentitySessionState, UnlockedIdentity};
 use crate::sidecar::{AxlSidecar, AxlSidecarState};
 
-/// Base Sepolia chain id — EIP-155 txs from [`register_username`].
-const BASE_SEPOLIA_CHAIN_ID: u64 = 84532;
+/// Ethereum Sepolia chain id — EIP-155 txs from [`register_username`].
+const SEPOLIA_CHAIN_ID: u64 = 11155111;
+const DEFAULT_ENS_REGISTRY_ADDRESS: &str = "0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e";
+const DEFAULT_SEPOLIA_PUBLIC_RESOLVER_ADDRESS: &str =
+    "0xE99638b40E4Fff0129D56f03b55b6bbC4BBE49b5";
+const DEFAULT_SEPOLIA_NAME_WRAPPER_ADDRESS: &str =
+    "0x0635513f179D50A207757E05759CbD106d7dFcE8";
+const DEFAULT_ENS_SEPOLIA_RPC_URL: &str = "https://ethereum-sepolia.publicnode.com";
+const DEFAULT_ENS_PARENT_NAME: &str = "anton.eth";
 
 alloy::sol! {
     #[sol(rpc)]
-    contract ChatRegistrar {
-        function available(string label) external view returns (bool);
-        function registerWithRecords(string label, address owner_, bytes peerId, string pubkeyPem) external;
+    contract EnsRegistry {
+        function owner(bytes32 node) external view returns (address);
+        function setSubnodeRecord(bytes32 node, bytes32 label, address owner, address resolver, uint64 ttl) external;
+        function setOwner(bytes32 node, address owner) external;
+    }
+
+    #[sol(rpc)]
+    contract PublicResolver {
+        function setAddr(bytes32 node, address a) external;
+        function setText(bytes32 node, string calldata key, string calldata value) external;
+    }
+
+    #[sol(rpc)]
+    contract NameWrapper {
+        function setSubnodeRecord(
+            bytes32 parentNode,
+            string calldata label,
+            address owner,
+            address resolver,
+            uint64 ttl,
+            uint32 fuses,
+            uint64 expiry
+        ) external returns (bytes32);
+        function safeTransferFrom(address from, address to, uint256 id, uint256 amount, bytes calldata data) external;
     }
 }
 
@@ -91,28 +120,67 @@ fn normalize_label(raw: &str) -> Result<String, String> {
     Ok(label)
 }
 
-fn base_sepolia_rpc_url() -> String {
-    std::env::var("ANTON_BASE_SEPOLIA_RPC_URL").unwrap_or_else(|_| "https://sepolia.base.org".into())
+fn ens_registration_rpc_url() -> String {
+    std::env::var("ENS_RPC_URL")
+        .or_else(|_| std::env::var("ENS_MAINNET_RPC_URL"))
+        .unwrap_or_else(|_| DEFAULT_ENS_SEPOLIA_RPC_URL.into())
 }
 
-fn registrar_address() -> Result<Address, String> {
-    let s = std::env::var("ANTON_CHAT_REGISTRAR").map_err(|_| {
-        "Set ANTON_CHAT_REGISTRAR to your deployed ChatRegistrar contract address on Base Sepolia."
-            .to_string()
-    })?;
-    s.parse::<Address>().map_err(|e| format!("ANTON_CHAT_REGISTRAR is not a valid address: {e}"))
+fn env_address(var: &str, default: &str) -> Result<Address, String> {
+    let s = std::env::var(var).unwrap_or_else(|_| default.to_string());
+    s.parse::<Address>()
+        .map_err(|e| format!("{var} is not a valid address: {e}"))
 }
 
-/// Signs `register_username` txs on Base Sepolia. Gas is paid by this key (deployment / `anton.eth`
-/// operator wallet), not the user's derived wallet — `owner_` on-chain remains the user's address.
+fn ens_registry_address() -> Result<Address, String> {
+    env_address("ENS_REGISTRY_ADDRESS", DEFAULT_ENS_REGISTRY_ADDRESS)
+}
+
+fn ens_public_resolver_address() -> Result<Address, String> {
+    env_address(
+        "ENS_PUBLIC_RESOLVER_ADDRESS",
+        DEFAULT_SEPOLIA_PUBLIC_RESOLVER_ADDRESS,
+    )
+}
+
+fn ens_name_wrapper_address() -> Result<Address, String> {
+    env_address("ENS_NAME_WRAPPER_ADDRESS", DEFAULT_SEPOLIA_NAME_WRAPPER_ADDRESS)
+}
+
+fn ens_parent_name() -> String {
+    std::env::var("ANTON_ENS_PARENT_NAME").unwrap_or_else(|_| DEFAULT_ENS_PARENT_NAME.into())
+}
+
+fn ens_name_for_label(label: &str) -> String {
+    format!("{label}.{}", ens_parent_name())
+}
+
+fn ens_nodes_for_label(label: &str) -> (B256, B256, B256) {
+    let parent_name = ens_parent_name();
+    let full_name = format!("{label}.{parent_name}");
+    (
+        namehash(&parent_name),
+        keccak256(label.as_bytes()),
+        namehash(&full_name),
+    )
+}
+
+fn ens_token_id(node: B256) -> U256 {
+    U256::from_be_slice(node.as_slice())
+}
+
+/// Signs `register_username` txs on Sepolia L1. Gas is paid by this key (the `anton.eth`
+/// operator wallet), not the user's derived wallet — final ENS owner remains the user.
 fn registration_gas_signer() -> Result<PrivateKeySigner, String> {
-    let raw = std::env::var("ANTON_REGISTRATION_GAS_PRIVATE_KEY").map_err(|_| {
-        "Set ANTON_REGISTRATION_GAS_PRIVATE_KEY to the hex private key of the wallet that pays Base Sepolia gas for register_username (e.g. the deployment wallet that owns anton.eth)."
-            .to_string()
-    })?;
+    let raw = std::env::var("ANTON_ENS_REGISTRATION_PRIVATE_KEY")
+        .or_else(|_| std::env::var("ANTON_REGISTRATION_GAS_PRIVATE_KEY"))
+        .map_err(|_| {
+            "Set ANTON_ENS_REGISTRATION_PRIVATE_KEY to the hex private key of the Sepolia wallet that owns/manages anton.eth."
+                .to_string()
+        })?;
     PrivateKeySigner::from_str(raw.trim())
-        .map_err(|e| format!("ANTON_REGISTRATION_GAS_PRIVATE_KEY: {e}"))
-        .map(|s| s.with_chain_id(Some(BASE_SEPOLIA_CHAIN_ID)))
+        .map_err(|e| format!("ANTON_ENS_REGISTRATION_PRIVATE_KEY: {e}"))
+        .map(|s| s.with_chain_id(Some(SEPOLIA_CHAIN_ID)))
 }
 
 fn derive_from_mnemonic(mnemonic: &MnemonicPhrase) -> Result<(Wallet, Ed25519Identity), String> {
@@ -215,18 +283,20 @@ pub async fn unlock_vault<R: Runtime>(
 #[tauri::command]
 pub async fn onboarding_check_username(label: String) -> Result<CheckUsernameResponse, String> {
     let label = normalize_label(&label)?;
-    let registrar = registrar_address()?;
-    let url = base_sepolia_rpc_url()
+    let registry = ens_registry_address()?;
+    let url = ens_registration_rpc_url()
         .parse()
-        .map_err(|_| "Invalid ANTON_BASE_SEPOLIA_RPC_URL.".to_string())?;
+        .map_err(|_| "Invalid ENS_RPC_URL.".to_string())?;
     let provider = ProviderBuilder::new().connect_http(url);
-    let contract = ChatRegistrar::new(registrar, provider);
-    let available = contract
-        .available(label)
+    let registry = EnsRegistry::new(registry, provider);
+    let (_, _, node) = ens_nodes_for_label(&label);
+    let owner = registry
+        .owner(node)
         .call()
         .await
         .map_err(|e| e.to_string())?;
 
+    let available = owner == Address::ZERO;
     Ok(CheckUsernameResponse { available })
 }
 
@@ -241,38 +311,110 @@ pub async fn register_username<R: Runtime>(
         return Err("Unlock your vault or finish onboarding before registering.".into());
     };
 
-    let registrar = registrar_address()?;
-    let rpc_url = base_sepolia_rpc_url()
+    let registry_addr = ens_registry_address()?;
+    let resolver_addr = ens_public_resolver_address()?;
+    let name_wrapper_addr = ens_name_wrapper_address()?;
+    let rpc_url = ens_registration_rpc_url()
         .parse()
-        .map_err(|_| "Invalid ANTON_BASE_SEPOLIA_RPC_URL.".to_string())?;
+        .map_err(|_| "Invalid ENS_RPC_URL.".to_string())?;
 
     let gas_signer = registration_gas_signer()?;
+    let operator = gas_signer.address();
 
     let provider = ProviderBuilder::new()
         .wallet(gas_signer)
         .connect_http(rpc_url);
 
     let pem = id.ed25519.to_public_pkcs8_pem().map_err(|e| e.to_string())?;
-    let peer_bytes = id.ed25519.peer_id();
-
-    let contract = ChatRegistrar::new(registrar, &provider);
     let owner = id.wallet.address();
+    let peer_id = id.ed25519.peer_id_hex();
+    let (parent_node, labelhash, node) = ens_nodes_for_label(&label);
 
-    let pending = contract
-        .registerWithRecords(
-            label.clone(),
-            owner,
-            Bytes::copy_from_slice(&peer_bytes),
-            pem,
-        )
+    let registry = EnsRegistry::new(registry_addr, &provider);
+    let resolver = PublicResolver::new(resolver_addr, &provider);
+    let name_wrapper = NameWrapper::new(name_wrapper_addr, &provider);
+
+    let existing_owner = registry
+        .owner(node)
+        .call()
+        .await
+        .map_err(|e| format!("check ENS owner: {e}"))?;
+    if existing_owner != Address::ZERO {
+        return Err(format!("{}.{} is already registered.", label, ens_parent_name()));
+    }
+
+    let parent_owner = registry
+        .owner(parent_node)
+        .call()
+        .await
+        .map_err(|e| format!("check parent ENS owner: {e}"))?;
+
+    let pending = if parent_owner == name_wrapper_addr {
+        name_wrapper
+            .setSubnodeRecord(parent_node, label.clone(), operator, resolver_addr, 0, 0, 0)
+            .send()
+            .await
+            .map_err(|e| format!("create wrapped ENS subname: {e}"))?
+    } else {
+        registry
+            .setSubnodeRecord(parent_node, labelhash, operator, resolver_addr, 0)
+            .send()
+            .await
+            .map_err(|e| format!("create ENS subname: {e}"))?
+    };
+    let create_tx = pending
+        .watch()
+        .await
+        .map_err(|e| format!("wait for create subname: {e}"))?;
+
+    let pending = resolver
+        .setAddr(node, owner)
         .send()
         .await
-        .map_err(|e| format!("send transaction: {e}"))?;
+        .map_err(|e| format!("set addr(60): {e}"))?;
+    pending
+        .watch()
+        .await
+        .map_err(|e| format!("wait for set addr(60): {e}"))?;
+
+    let pending = resolver
+        .setText(node, "axl_peer_id".to_string(), peer_id)
+        .send()
+        .await
+        .map_err(|e| format!("set axl_peer_id: {e}"))?;
+    pending
+        .watch()
+        .await
+        .map_err(|e| format!("wait for set axl_peer_id: {e}"))?;
+
+    let pending = resolver
+        .setText(node, "axl_pubkey".to_string(), pem)
+        .send()
+        .await
+        .map_err(|e| format!("set axl_pubkey: {e}"))?;
+    pending
+        .watch()
+        .await
+        .map_err(|e| format!("wait for set axl_pubkey: {e}"))?;
+
+    let pending = if parent_owner == name_wrapper_addr {
+        name_wrapper
+            .safeTransferFrom(operator, owner, ens_token_id(node), U256::from(1), Bytes::new())
+            .send()
+            .await
+            .map_err(|e| format!("transfer wrapped ENS subname to user: {e}"))?
+    } else {
+        registry
+            .setOwner(node, owner)
+            .send()
+            .await
+            .map_err(|e| format!("transfer ENS subname to user: {e}"))?
+    };
 
     let tx_hash = pending
         .watch()
         .await
-        .map_err(|e| format!("wait for receipt: {e}"))?;
+        .map_err(|e| format!("wait for transfer owner: {e}"))?;
 
     let receipt = provider
         .get_transaction_receipt(tx_hash)
@@ -284,7 +426,15 @@ pub async fn register_username<R: Runtime>(
         return Err("Registration transaction reverted on-chain.".into());
     }
 
-    let ens = format!("{label}.anton.eth");
+    tracing::info!(
+        target = "anton::onboarding",
+        create_tx = format!("{create_tx:#x}"),
+        owner_tx = format!("{tx_hash:#x}"),
+        ens = ens_name_for_label(&label),
+        "registered direct ENS subname"
+    );
+
+    let ens = ens_name_for_label(&label);
     let settings_path = settings_path(&app)?;
     let mut settings = Settings::load_or_default(&settings_path).map_err(|e| e.to_string())?;
     settings.last_username = Some(ens.clone());

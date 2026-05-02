@@ -12,7 +12,6 @@ fs_permissions = [{ access = "read", path = "./" }]
 remappings = [
   "@openzeppelin/=lib/openzeppelin-contracts/",
   "@ensdomains/ens-contracts/=lib/ens-contracts/contracts/",
-  "durin/=lib/durin/",
   "forge-std/=lib/forge-std/src/",
 ]
 
@@ -27,9 +26,7 @@ bracket_spacing = false
 int_types = "long"
 
 [rpc_endpoints]
-base_sepolia = "${BASE_SEPOLIA_RPC_URL}"
-base = "${BASE_RPC_URL}"
+sepolia = "${SEPOLIA_RPC_URL}"
 
 [etherscan]
-base_sepolia = { key = "${ETHERSCAN_API_KEY}", url = "https://api-sepolia.basescan.org/api", chain = 84532 }
-base = { key = "${ETHERSCAN_API_KEY}", url = "https://api.basescan.org/api", chain = 8453 }
+sepolia = { key = "${ETHERSCAN_API_KEY}", url = "https://api-sepolia.etherscan.io/api", chain = 11155111 }

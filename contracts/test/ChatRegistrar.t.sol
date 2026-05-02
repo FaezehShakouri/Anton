@@ -26,39 +26,59 @@ contract HexTest is Test {
     }
 }
 
-/// @dev Minimal registry surface so `ChatRegistrar` can be exercised without Durin fixtures.
 contract RegistryStub {
-    bytes32 public baseNode = bytes32(uint256(1));
+    bytes32 public immutable baseNode = bytes32(uint256(1));
 
-    mapping(bytes32 node => mapping(uint256 coinType => bytes value)) internal addrs;
-    mapping(bytes32 node => mapping(string key => string value)) internal texts;
+    mapping(bytes32 node => address owner_) internal owners;
+    mapping(bytes32 node => address resolver_) internal resolvers;
+
+    constructor() {
+        owners[baseNode] = address(this);
+    }
 
     function makeNode(bytes32 parent, string calldata label) public pure returns (bytes32) {
         return keccak256(abi.encodePacked(parent, keccak256(bytes(label))));
     }
 
-    function setAddr(bytes32 node, uint256 coinType_, bytes calldata addr_) external {
-        addrs[node][coinType_] = addr_;
+    function owner(bytes32 node) external view returns (address) {
+        return owners[node];
     }
 
+    function resolver(bytes32 node) external view returns (address) {
+        return resolvers[node];
+    }
+
+    function setSubnodeRecord(
+        bytes32 parent,
+        bytes32 label,
+        address owner_,
+        address resolver_,
+        uint64
+    ) external {
+        bytes32 node = keccak256(abi.encodePacked(parent, label));
+        owners[node] = owner_;
+        resolvers[node] = resolver_;
+    }
+
+    function setOwner(bytes32 node, address owner_) external {
+        owners[node] = owner_;
+    }
+}
+
+contract ResolverStub {
+    mapping(bytes32 node => address value) internal addrs;
+    mapping(bytes32 node => mapping(string key => string value)) internal texts;
+
     function setAddr(bytes32 node, address addr_) external {
-        addrs[node][60] = abi.encodePacked(addr_);
+        addrs[node] = addr_;
     }
 
     function setText(bytes32 node, string calldata key, string calldata value) external {
         texts[node][key] = value;
     }
 
-    function createSubnode(bytes32, string calldata, address, bytes[] calldata)
-        external
-        pure
-        returns (bytes32)
-    {
-        return bytes32(uint256(0xdead));
-    }
-
-    function addrOf(bytes32 node, uint256 coinType_) external view returns (bytes memory) {
-        return addrs[node][coinType_];
+    function addrOf(bytes32 node) external view returns (address) {
+        return addrs[node];
     }
 
     function textOf(bytes32 node, string calldata key) external view returns (string memory) {
@@ -68,11 +88,13 @@ contract RegistryStub {
 
 contract ChatRegistrarTest is Test {
     RegistryStub internal stub;
+    ResolverStub internal resolver;
     ChatRegistrar internal registrar;
 
     function setUp() public {
         stub = new RegistryStub();
-        registrar = new ChatRegistrar(address(stub));
+        resolver = new ResolverStub();
+        registrar = new ChatRegistrar(address(stub), address(resolver), stub.baseNode());
     }
 
     function test_registerWithRecords_peerNot32_reverts() public {
@@ -97,13 +119,14 @@ contract ChatRegistrarTest is Test {
 
         bytes32 node = stub.makeNode(stub.baseNode(), "alice");
 
-        assertEq(stub.addrOf(node, registrar.coinType()), abi.encodePacked(owner_));
-        assertEq(stub.addrOf(node, 60), abi.encodePacked(owner_));
-        assertEq(stub.textOf(node, "axl_peer_id"), Hex.bytesToHexPrefixed(pk));
-        assertEq(stub.textOf(node, "axl_pubkey"), pem);
+        assertEq(stub.owner(node), owner_);
+        assertEq(stub.resolver(node), address(resolver));
+        assertEq(resolver.addrOf(node), owner_);
+        assertEq(resolver.textOf(node, "axl_peer_id"), Hex.bytesToHexPrefixed(pk));
+        assertEq(resolver.textOf(node, "axl_pubkey"), pem);
     }
 
-    function test_available_delegatesToDurinLogic() public view {
+    function test_available_checks_registry_owner() public view {
         assertTrue(registrar.available("zzz"));
     }
 }

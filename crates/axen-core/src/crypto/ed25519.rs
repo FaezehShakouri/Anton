@@ -101,7 +101,7 @@ impl Ed25519Identity {
     }
 
     /// SPKI PEM for the ed25519 **public** key (`BEGIN PUBLIC KEY`), suitable for the on-chain
-    /// `axl_pubkey` text record passed to `registerWithRecords`.
+    /// `axl_pubkey` ENS text record.
     pub fn to_public_pkcs8_pem(&self) -> Result<String> {
         self.signing_key
             .verifying_key()

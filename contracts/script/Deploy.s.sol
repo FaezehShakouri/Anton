@@ -4,22 +4,22 @@ pragma solidity ^0.8.27;
 import {Script, console} from "forge-std/Script.sol";
 import {ChatRegistrar} from "../src/ChatRegistrar.sol";
 
-/// @notice Deploys `ChatRegistrar` pointing at an initialized Durin `L2Registry`.
-/// @dev After deployment, the registry owner must call `addRegistrar(address(registrar))`
-///      once (see `script/AddRegistrar.s.sol`).
+/// @notice Deploys the optional L1 ENS `ChatRegistrar` helper.
+/// @dev The deployed registrar must be approved as an operator for the parent ENS name.
 contract Deploy is Script {
     function run() external returns (ChatRegistrar registrar) {
         uint256 pk = vm.envUint("PRIVATE_KEY");
-        address l2Registry = vm.envAddress("L2_REGISTRY");
+        address ensRegistry = vm.envAddress("ENS_REGISTRY");
+        address publicResolver = vm.envAddress("ENS_PUBLIC_RESOLVER");
+        bytes32 parentNode = vm.envBytes32("ENS_PARENT_NODE");
 
         vm.startBroadcast(pk);
-        registrar = new ChatRegistrar(l2Registry);
+        registrar = new ChatRegistrar(ensRegistry, publicResolver, parentNode);
         vm.stopBroadcast();
 
         console.log("ChatRegistrar:", address(registrar));
-        console.log("L2_REGISTRY:", l2Registry);
-        console.log(
-            "Next (registry owner): forge script script/AddRegistrar.s.sol --rpc-url ... --broadcast"
-        );
+        console.log("ENS_REGISTRY:", ensRegistry);
+        console.log("ENS_PUBLIC_RESOLVER:", publicResolver);
+        console.logBytes32(parentNode);
     }
 }
