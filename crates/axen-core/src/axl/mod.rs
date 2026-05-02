@@ -18,6 +18,12 @@ pub use transport::{AxlHttpClient, AxlTransport};
 
 /// Default loopback HTTP bridge address the AXL sidecar exposes.
 pub const DEFAULT_AXL_BRIDGE_URL: &str = "http://127.0.0.1:9002";
+pub const DEFAULT_AXL_BRIDGE_ADDR: &str = "127.0.0.1";
+pub const DEFAULT_AXL_BRIDGE_PORT: u16 = 9002;
+pub const DEFAULT_AXL_ROUTER_ADDR: &str = "http://127.0.0.1";
+pub const DEFAULT_AXL_ROUTER_PORT: u16 = 9003;
+pub const DEFAULT_AXL_A2A_ADDR: &str = "http://127.0.0.1";
+pub const DEFAULT_AXL_A2A_PORT: u16 = 9004;
 
 /// Default Yggdrasil-style listen address for the underlay mesh.
 pub const DEFAULT_AXL_LISTEN_ADDR: &str = "tls://[::]:9001";

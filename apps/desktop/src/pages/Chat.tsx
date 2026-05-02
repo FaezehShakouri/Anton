@@ -23,6 +23,8 @@ type AgentStatus = {
   disabledUntil?: number | null;
 };
 
+type A2aTool = "draft_reply" | "send_reply" | "summarize_conversation" | "handoff_to_human";
+
 function toReply(message: ChatMessage): ChatReply {
   return {
     id: message.id,
@@ -51,6 +53,8 @@ export function ChatPage() {
   const [agentEnabled, setAgentEnabled] = useState(false);
   const [agentBusy, setAgentBusy] = useState(false);
   const [agentStatus, setAgentStatus] = useState<string | null>(null);
+  const [a2aBusy, setA2aBusy] = useState<A2aTool | null>(null);
+  const [a2aStatus, setA2aStatus] = useState<string | null>(null);
   const messageEndRef = useRef<HTMLDivElement | null>(null);
 
   const activeNorm = useMemo(
@@ -77,6 +81,7 @@ export function ChatPage() {
       setReplyTo(null);
       setAgentEnabled(false);
       setAgentStatus(null);
+      setA2aStatus(null);
       return;
     }
     void (async () => {
@@ -230,6 +235,60 @@ export function ChatPage() {
     }
   };
 
+  const formatA2aResponse = (tool: A2aTool, response: unknown): string => {
+    const text =
+      typeof response === "object" && response !== null
+        ? (((response as { result?: { message?: { parts?: Array<{ text?: unknown }> } } }).result?.message?.parts?.[0]
+            ?.text as string | undefined) ?? JSON.stringify(response))
+        : String(response);
+    let parsed: unknown = text;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      // Some A2A bridges return direct text. Show it as-is.
+    }
+    const result =
+      typeof parsed === "object" && parsed !== null && "result" in parsed
+        ? (parsed as { result?: unknown }).result
+        : parsed;
+    if (tool === "draft_reply" && typeof result === "object" && result !== null && "text" in result) {
+      return `Remote draft: ${(result as { text?: string }).text ?? ""}`;
+    }
+    if (tool === "summarize_conversation" && typeof result === "object" && result !== null && "summary" in result) {
+      return `Remote summary: ${(result as { summary?: string }).summary ?? ""}`;
+    }
+    if (tool === "handoff_to_human") {
+      return "Remote agent switched to human handoff.";
+    }
+    if (tool === "send_reply") {
+      return "Remote agent sent a signed reply.";
+    }
+    return typeof result === "string" ? result : JSON.stringify(result);
+  };
+
+  const callA2aTool = async (tool: A2aTool, extra: Record<string, unknown> = {}) => {
+    if (!activeNorm) return;
+    setA2aBusy(tool);
+    setA2aStatus(null);
+    try {
+      const res = await ipc("agent_a2a_call_tool", {
+        request: {
+          peer: activeNorm,
+          tool,
+          arguments: { peer: activeNorm, ...extra },
+        },
+      });
+      setA2aStatus(formatA2aResponse(tool, res.response));
+      if (tool === "send_reply") {
+        await refreshMessages(activeNorm);
+      }
+    } catch (e) {
+      setA2aStatus(e instanceof Error ? e.message : String(e));
+    } finally {
+      setA2aBusy(null);
+    }
+  };
+
   return (
     <div className="grid h-full grid-cols-[18rem_1fr]">
       <aside className="flex flex-col border-r border-slate-800 bg-slate-950/40">
@@ -379,6 +438,46 @@ export function ChatPage() {
           </div>
         </div>
         <footer className="border-t border-slate-800 p-3">
+          {activeNorm ? (
+            <div className="mb-3 rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs font-medium text-slate-400">AXL A2A</span>
+                <button
+                  type="button"
+                  disabled={a2aBusy != null}
+                  onClick={() => void callA2aTool("draft_reply")}
+                  className="rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-300 hover:bg-slate-900 disabled:opacity-50"
+                >
+                  {a2aBusy === "draft_reply" ? "Drafting…" : "Remote draft"}
+                </button>
+                <button
+                  type="button"
+                  disabled={a2aBusy != null}
+                  onClick={() => void callA2aTool("send_reply", draft.trim() ? { text: draft.trim() } : {})}
+                  className="rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-300 hover:bg-slate-900 disabled:opacity-50"
+                >
+                  {a2aBusy === "send_reply" ? "Sending…" : "Remote send reply"}
+                </button>
+                <button
+                  type="button"
+                  disabled={a2aBusy != null}
+                  onClick={() => void callA2aTool("summarize_conversation")}
+                  className="rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-300 hover:bg-slate-900 disabled:opacity-50"
+                >
+                  {a2aBusy === "summarize_conversation" ? "Summarizing…" : "Remote summary"}
+                </button>
+                <button
+                  type="button"
+                  disabled={a2aBusy != null}
+                  onClick={() => void callA2aTool("handoff_to_human", { reason: "A2A handoff requested from Anton UI." })}
+                  className="rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-300 hover:bg-slate-900 disabled:opacity-50"
+                >
+                  {a2aBusy === "handoff_to_human" ? "Handing off…" : "Remote handoff"}
+                </button>
+              </div>
+              {a2aStatus ? <p className="mt-2 whitespace-pre-wrap text-xs text-slate-400">{a2aStatus}</p> : null}
+            </div>
+          ) : null}
           {replyTo ? (
             <div className="mb-2 flex items-start justify-between gap-3 rounded-md border border-slate-800 bg-slate-900/70 px-3 py-2 text-xs">
               <div className="min-w-0">

@@ -8,6 +8,7 @@
 //! | POST   | `/send`          | outbound  | body = raw payload bytes; header `X-Destination-Peer-Id: <64-hex>`          |
 //! | GET    | `/recv`          | inbound   | long-poll; 200 = payload + `X-From-Peer-Id`; 204 = idle; reconnect promptly |
 //! | GET    | `/topology`      | probe     | JSON document; we map the relevant fields into [`Topology`]                  |
+//! | POST   | `/a2a/{peer_id}` | outbound  | JSON-RPC request/response via AXL's A2A envelope                             |
 //!
 //! The transport itself is process-agnostic. Spawning + supervising the
 //! AXL binary lives in the desktop app (`apps/desktop/src-tauri/src/sidecar.rs`)
@@ -165,10 +166,7 @@ impl AxlHttpClient {
 
         let res = ensure_2xx(res).await?;
         let body = res.bytes().await?;
-        Ok(Some(Inbound {
-            from_peer_id,
-            body,
-        }))
+        Ok(Some(Inbound { from_peer_id, body }))
     }
 
     /// `GET /topology`.
@@ -184,6 +182,27 @@ impl AxlHttpClient {
         parse_topology(raw)
     }
 
+    /// `POST /a2a/{peer_id}` with a JSON-RPC A2A request body.
+    pub async fn a2a_call(
+        &self,
+        to: &PeerId,
+        request: &serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        let res = self
+            .inner
+            .client
+            .post(format!(
+                "{}/a2a/{}",
+                self.inner.base_url,
+                to.to_hex_unprefixed()
+            ))
+            .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
+            .json(request)
+            .send()
+            .await?;
+        let res = ensure_2xx(res).await?;
+        Ok(res.json().await?)
+    }
 }
 
 async fn ensure_2xx(res: reqwest::Response) -> Result<reqwest::Response> {
@@ -505,7 +524,10 @@ mod tests {
 
         Mock::given(method("POST"))
             .and(path("/send"))
-            .and(header(DESTINATION_HEADER, dest.to_hex_unprefixed().as_str()))
+            .and(header(
+                DESTINATION_HEADER,
+                dest.to_hex_unprefixed().as_str(),
+            ))
             .and(header(CONTENT_TYPE.as_str(), "application/octet-stream"))
             .respond_with(ResponseTemplate::new(200))
             .mount(&server)
@@ -533,6 +555,39 @@ mod tests {
             }
             _ => panic!("unexpected error: {err}"),
         }
+    }
+
+    #[tokio::test]
+    async fn a2a_call_posts_json_to_unprefixed_peer_path() {
+        let server = mock_server().await;
+        let dest = peer(0xCD);
+        let response = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": { "ok": true }
+        });
+
+        Mock::given(method("POST"))
+            .and(path(format!("/a2a/{}", dest.to_hex_unprefixed())))
+            .and(header(CONTENT_TYPE.as_str(), "application/json"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(response.clone()))
+            .mount(&server)
+            .await;
+
+        let client = client_for(&server);
+        let got = client
+            .a2a_call(
+                &dest,
+                &serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "method": "SendMessage",
+                    "id": 1,
+                    "params": {}
+                }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(got, response);
     }
 
     #[tokio::test]
@@ -615,7 +670,10 @@ mod tests {
         assert_eq!(first.body.as_ref(), b"first");
 
         let second = stream.next().await.expect("item");
-        assert!(second.is_err(), "expected the next iteration to surface the 500");
+        assert!(
+            second.is_err(),
+            "expected the next iteration to surface the 500"
+        );
     }
 
     #[tokio::test]
@@ -748,7 +806,9 @@ mod tests {
 
         Mock::given(method("GET"))
             .and(path("/topology"))
-            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json; charset=utf-8"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_raw(body, "application/json; charset=utf-8"),
+            )
             .mount(&server)
             .await;
 

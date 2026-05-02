@@ -10,6 +10,7 @@
  *   POST /send       body: payload bytes, headers: X-Destination-Peer-Id
  *   GET  /recv       long-poll; returns a payload + X-From-Peer-Id header
  *   GET  /topology   network info
+ *   POST /a2a/:peer  JSON-RPC request/response via AXL A2A
  */
 
 export interface AxlClientOptions {
@@ -39,6 +40,20 @@ export interface Topology {
   peerCount: number;
   bootstrapPeers: ReadonlyArray<string>;
 }
+
+export type A2AJsonRpcRequest = {
+  jsonrpc: "2.0";
+  method: string;
+  id: string | number;
+  params?: unknown;
+};
+
+export type A2AJsonRpcResponse = {
+  jsonrpc: "2.0";
+  id: string | number | null;
+  result?: unknown;
+  error?: { code: number; message: string; data?: unknown };
+};
 
 export class AxlClient {
   readonly baseUrl: string;
@@ -122,6 +137,22 @@ export class AxlClient {
     });
     if (!res.ok) throw new AxlHttpError(res.status, await safeReadText(res));
     return (await res.json()) as Topology;
+  }
+
+  /** Call a remote peer's A2A server through the local AXL bridge. */
+  async a2aCall(
+    destinationPeerId: string,
+    request: A2AJsonRpcRequest,
+  ): Promise<A2AJsonRpcResponse> {
+    const destination = destinationPeerId.trim().replace(/^0x/i, "");
+    const res = await this.fetchImpl(`${this.baseUrl}/a2a/${destination}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+      signal: this.externalSignal,
+    });
+    if (!res.ok) throw new AxlHttpError(res.status, await safeReadText(res));
+    return (await res.json()) as A2AJsonRpcResponse;
   }
 }
 

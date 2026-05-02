@@ -115,6 +115,20 @@ pub struct AgentConversationMode {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AgentDraftResponse {
+    pub peer: String,
+    pub text: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSummaryResponse {
+    pub peer: String,
+    pub summary: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AgentTestResponse {
     pub ok: bool,
     pub message: String,
@@ -286,7 +300,11 @@ impl AgentState {
         );
     }
 
-    fn record_rate_limited_send(&self, peer: &str, max_per_hour: u32) -> Result<(), RateLimitError> {
+    fn record_rate_limited_send(
+        &self,
+        peer: &str,
+        max_per_hour: u32,
+    ) -> Result<(), RateLimitError> {
         let conn = self.conn()?;
         let peer = normalize_chat_name(peer);
         let cutoff = now_ms() - 60 * 60 * 1000;
@@ -386,7 +404,9 @@ pub fn agent_set_conversation_mode(
 }
 
 #[tauri::command]
-pub async fn agent_test_provider(state: State<'_, AgentState>) -> Result<AgentTestResponse, String> {
+pub async fn agent_test_provider(
+    state: State<'_, AgentState>,
+) -> Result<AgentTestResponse, String> {
     let settings = state.settings()?;
     let reply = complete_chat(
         &settings,
@@ -402,11 +422,7 @@ pub async fn agent_test_provider(state: State<'_, AgentState>) -> Result<AgentTe
     })
 }
 
-pub fn maybe_auto_reply<R: Runtime>(
-    app: AppHandle<R>,
-    peer: String,
-    message: ChatMessage,
-) {
+pub fn maybe_auto_reply<R: Runtime>(app: AppHandle<R>, peer: String, message: ChatMessage) {
     tauri::async_runtime::spawn(async move {
         if let Err(err) = auto_reply(app.clone(), peer.clone(), message).await {
             if let Some(agent_state) = app.try_state::<AgentState>() {
@@ -415,6 +431,176 @@ pub fn maybe_auto_reply<R: Runtime>(
             emit_status(&app, &peer, "error", Some(err), None, None, None);
         }
     });
+}
+
+pub async fn draft_reply_for_peer<R: Runtime>(
+    app: &AppHandle<R>,
+    peer: &str,
+) -> Result<AgentDraftResponse, String> {
+    let peer = normalize_chat_name(peer);
+    let agent_state = app
+        .try_state::<AgentState>()
+        .ok_or_else(|| "Agent state is not available.".to_string())?;
+    let settings = agent_state.settings()?;
+    let messaging = app
+        .try_state::<MessagingState>()
+        .ok_or_else(|| "Messaging state is not available.".to_string())?;
+    let recent = {
+        let g = messaging.inner.lock();
+        g.conversations.messages_for_peer(&peer).to_vec()
+    };
+    let prompt = build_provider_messages(&settings, &recent);
+    let text = complete_chat(&settings, prompt).await?;
+    Ok(AgentDraftResponse {
+        peer,
+        text: text.trim().to_string(),
+    })
+}
+
+pub async fn send_reply_for_peer<R: Runtime>(
+    app: &AppHandle<R>,
+    peer: &str,
+    text: Option<String>,
+) -> Result<chat::ChatSendResponse, String> {
+    let peer = normalize_chat_name(peer);
+    let agent_state = app
+        .try_state::<AgentState>()
+        .ok_or_else(|| "Agent state is not available.".to_string())?;
+    if !agent_state.conversation_enabled(&peer)? {
+        return Err("Enable agent mode for this conversation before A2A can send replies.".into());
+    }
+    let settings = agent_state.settings()?;
+    match agent_state.record_rate_limited_send(&peer, settings.max_replies_per_hour) {
+        Ok(()) => {}
+        Err(RateLimitError::Exceeded {
+            max_per_hour,
+            disabled_until,
+        }) => {
+            agent_state.disable_conversation_until(&peer, disabled_until)?;
+            emit_status(
+                app,
+                &peer,
+                "disabled",
+                Some(format!(
+                    "Agent-to-agent reply limit reached ({max_per_hour}/hour). Switched this chat to Manual until the limit window clears."
+                )),
+                None,
+                Some(false),
+                Some(disabled_until),
+            );
+            return Err("Agent-to-agent reply limit reached for this conversation.".into());
+        }
+        Err(RateLimitError::Storage(e)) => return Err(e),
+    }
+
+    let reply = match text.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
+        Some(text) => text,
+        None => draft_reply_for_peer(app, &peer).await?.text,
+    };
+    if reply.trim().is_empty() {
+        return Err("Agent returned an empty reply.".to_string());
+    }
+
+    let chat_state = app
+        .try_state::<ChatState>()
+        .ok_or_else(|| "Chat state is not available.".to_string())?;
+    let resolver = app
+        .try_state::<ResolverState>()
+        .ok_or_else(|| "Resolver state is not available.".to_string())?;
+    let session = app
+        .try_state::<IdentitySessionState>()
+        .ok_or_else(|| "Unlock your vault before agent replies can be sent.".to_string())?;
+    let messaging = app
+        .try_state::<MessagingState>()
+        .ok_or_else(|| "Messaging state is not available.".to_string())?;
+    let sidecar = app
+        .try_state::<AxlSidecarState>()
+        .ok_or_else(|| "AXL sidecar state is not available.".to_string())?;
+    let sent = chat::send_chat_message(
+        app,
+        &chat_state,
+        &resolver,
+        &session,
+        &messaging,
+        &sidecar,
+        peer.clone(),
+        reply,
+        None,
+        true,
+        true,
+    )
+    .await?;
+    emit_status(app, &peer, "sent", None, Some(sent.id.clone()), None, None);
+    Ok(sent)
+}
+
+pub async fn summarize_conversation_for_peer<R: Runtime>(
+    app: &AppHandle<R>,
+    peer: &str,
+) -> Result<AgentSummaryResponse, String> {
+    let peer = normalize_chat_name(peer);
+    let agent_state = app
+        .try_state::<AgentState>()
+        .ok_or_else(|| "Agent state is not available.".to_string())?;
+    let settings = agent_state.settings()?;
+    let messaging = app
+        .try_state::<MessagingState>()
+        .ok_or_else(|| "Messaging state is not available.".to_string())?;
+    let recent = {
+        let g = messaging.inner.lock();
+        g.conversations.messages_for_peer(&peer).to_vec()
+    };
+    if recent.is_empty() {
+        return Ok(AgentSummaryResponse {
+            peer,
+            summary: "No messages in this local conversation yet.".to_string(),
+        });
+    }
+    let mut prompt = vec![ProviderMessage::system(
+        "Summarize this Anton chat briefly. Include important decisions, questions, and handoff context.".to_string(),
+    )];
+    for msg in recent
+        .iter()
+        .rev()
+        .take(20)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+    {
+        let role = if matches!(msg.state, anton_core::messaging::MessageState::Received) {
+            "Peer"
+        } else {
+            "Me"
+        };
+        prompt.push(ProviderMessage::user(format!("{role}: {}", msg.text)));
+    }
+    let summary = complete_chat(&settings, prompt).await?;
+    Ok(AgentSummaryResponse {
+        peer,
+        summary: summary.trim().to_string(),
+    })
+}
+
+pub fn handoff_to_human_for_peer<R: Runtime>(
+    app: &AppHandle<R>,
+    peer: &str,
+    reason: Option<String>,
+) -> Result<AgentConversationMode, String> {
+    let peer = normalize_chat_name(peer);
+    let agent_state = app
+        .try_state::<AgentState>()
+        .ok_or_else(|| "Agent state is not available.".to_string())?;
+    agent_state.set_conversation_enabled(&peer, false)?;
+    let msg = reason
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "A2A handoff requested. Switched this chat to Manual.".to_string());
+    agent_state.remember_last_error(&peer, &msg);
+    emit_status(app, &peer, "handoff", Some(msg), None, Some(false), None);
+    Ok(AgentConversationMode {
+        peer,
+        enabled: false,
+        disabled_until: None,
+    })
 }
 
 async fn auto_reply<R: Runtime>(
@@ -678,14 +864,20 @@ struct OpenAiMessage {
     content: String,
 }
 
-async fn complete_chat(settings: &AgentSettings, messages: Vec<ProviderMessage>) -> Result<String, String> {
+async fn complete_chat(
+    settings: &AgentSettings,
+    messages: Vec<ProviderMessage>,
+) -> Result<String, String> {
     let api_key = provider_api_key(settings);
     if matches!(settings.provider, AgentProviderKind::OpenRouter) && api_key.is_none() {
         return Err("Set OPENROUTER_API_KEY or save an OpenRouter API key in Settings.".into());
     }
 
     let client = reqwest::Client::new();
-    let url = format!("{}/chat/completions", settings.base_url.trim_end_matches('/'));
+    let url = format!(
+        "{}/chat/completions",
+        settings.base_url.trim_end_matches('/')
+    );
     let mut req = client.post(url).json(&OpenAiRequest {
         model: settings.model.clone(),
         messages,
@@ -700,9 +892,15 @@ async fn complete_chat(settings: &AgentSettings, messages: Vec<ProviderMessage>)
             .header("X-Title", "Anton");
     }
 
-    let res = req.send().await.map_err(|e| format!("LLM request failed: {e}"))?;
+    let res = req
+        .send()
+        .await
+        .map_err(|e| format!("LLM request failed: {e}"))?;
     let status = res.status();
-    let body = res.text().await.map_err(|e| format!("Read LLM response: {e}"))?;
+    let body = res
+        .text()
+        .await
+        .map_err(|e| format!("Read LLM response: {e}"))?;
     if !status.is_success() {
         return Err(format!("LLM provider returned {status}: {body}"));
     }
@@ -726,9 +924,19 @@ fn provider_api_key(settings: &AgentSettings) -> Option<String> {
     }
 }
 
-fn build_provider_messages(settings: &AgentSettings, recent: &[ChatMessage]) -> Vec<ProviderMessage> {
+fn build_provider_messages(
+    settings: &AgentSettings,
+    recent: &[ChatMessage],
+) -> Vec<ProviderMessage> {
     let mut out = vec![ProviderMessage::system(settings.system_prompt.clone())];
-    for msg in recent.iter().rev().take(12).collect::<Vec<_>>().into_iter().rev() {
+    for msg in recent
+        .iter()
+        .rev()
+        .take(12)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+    {
         let content = msg.text.clone();
         if matches!(msg.state, anton_core::messaging::MessageState::Received) {
             out.push(ProviderMessage::user(content));
@@ -806,8 +1014,12 @@ mod tests {
         migrate(&conn).unwrap();
         *state.db_path.lock() = Some(path);
 
-        state.record_rate_limited_send("alice.anton.eth", 2).unwrap();
-        state.record_rate_limited_send("alice.anton.eth", 2).unwrap();
+        state
+            .record_rate_limited_send("alice.anton.eth", 2)
+            .unwrap();
+        state
+            .record_rate_limited_send("alice.anton.eth", 2)
+            .unwrap();
         let err = state
             .record_rate_limited_send("alice.anton.eth", 2)
             .unwrap_err();

@@ -1,8 +1,9 @@
 use tauri::Manager;
 use tauri::RunEvent;
 
-mod chat;
+mod a2a;
 mod agent;
+mod chat;
 mod commands;
 mod messaging;
 mod onboarding;
@@ -13,6 +14,7 @@ mod sidecar;
 use messaging::MessagingState;
 use session::IdentitySessionState;
 
+use a2a::A2aServiceState;
 use agent::AgentState;
 use chat::{ChatState, ResolverState};
 
@@ -50,6 +52,7 @@ pub fn run() {
         .manage(IdentitySessionState::default())
         .manage(ChatState::default())
         .manage(AgentState::default())
+        .manage(A2aServiceState::default())
         .setup(|app| {
             tracing::info!(
                 version = env!("CARGO_PKG_VERSION"),
@@ -106,6 +109,7 @@ pub fn run() {
             agent::agent_get_conversation_mode,
             agent::agent_set_conversation_mode,
             agent::agent_test_provider,
+            a2a::agent_a2a_call_tool,
         ])
         .build(tauri::generate_context!())
         .expect("error while building anton desktop");
@@ -117,6 +121,9 @@ pub fn run() {
     app.run(|app_handle, event| {
         if matches!(event, RunEvent::Exit | RunEvent::ExitRequested { .. }) {
             if let Some(state) = app_handle.try_state::<AxlSidecarState>() {
+                state.shutdown();
+            }
+            if let Some(state) = app_handle.try_state::<A2aServiceState>() {
                 state.shutdown();
             }
         }

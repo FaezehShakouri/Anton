@@ -16,7 +16,11 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::axl::{DEFAULT_AXL_BRIDGE_URL, DEFAULT_AXL_LISTEN_ADDR};
+use crate::axl::{
+    DEFAULT_AXL_A2A_ADDR, DEFAULT_AXL_A2A_PORT, DEFAULT_AXL_BRIDGE_ADDR, DEFAULT_AXL_BRIDGE_PORT,
+    DEFAULT_AXL_BRIDGE_URL, DEFAULT_AXL_LISTEN_ADDR, DEFAULT_AXL_ROUTER_ADDR,
+    DEFAULT_AXL_ROUTER_PORT,
+};
 use crate::error::Result;
 
 /// Conventional sub-paths inside `app_data_dir/axl/` used by the desktop
@@ -52,6 +56,12 @@ pub struct AxlRuntimeConfig {
     /// Where the local-only HTTP bridge binds.
     /// Defaults to `http://127.0.0.1:9002`.
     pub bridge_url: String,
+    /// Local MCP router host. Empty disables AXL's MCP stream.
+    pub router_addr: String,
+    pub router_port: u16,
+    /// Local A2A server host. Empty disables AXL's A2A stream.
+    pub a2a_addr: String,
+    pub a2a_port: u16,
 }
 
 impl AxlRuntimeConfig {
@@ -61,6 +71,10 @@ impl AxlRuntimeConfig {
             bootstrap_peers,
             listen_addresses: vec![DEFAULT_AXL_LISTEN_ADDR.to_owned()],
             bridge_url: DEFAULT_AXL_BRIDGE_URL.to_owned(),
+            router_addr: DEFAULT_AXL_ROUTER_ADDR.to_owned(),
+            router_port: DEFAULT_AXL_ROUTER_PORT,
+            a2a_addr: DEFAULT_AXL_A2A_ADDR.to_owned(),
+            a2a_port: DEFAULT_AXL_A2A_PORT,
         }
     }
 
@@ -69,8 +83,15 @@ impl AxlRuntimeConfig {
         NodeConfig {
             private_key_path: self.paths.private_pem.to_string_lossy().into_owned(),
             listen_addresses: self.listen_addresses.clone(),
+            listen: self.listen_addresses.clone(),
             peers: self.bootstrap_peers.clone(),
             bridge_listen: self.bridge_url.clone(),
+            bridge_addr: DEFAULT_AXL_BRIDGE_ADDR.to_owned(),
+            api_port: DEFAULT_AXL_BRIDGE_PORT,
+            router_addr: self.router_addr.clone(),
+            router_port: self.router_port,
+            a2a_addr: self.a2a_addr.clone(),
+            a2a_port: self.a2a_port,
             interface_peers: serde_json::Value::Object(serde_json::Map::new()),
             allowed_public_keys: Vec::new(),
             multicast_interfaces: Vec::new(),
@@ -92,11 +113,27 @@ pub struct NodeConfig {
     pub private_key_path: String,
     #[serde(default)]
     pub listen_addresses: Vec<String>,
+    /// AXL's current docs use `Listen`; keep `ListenAddresses` too for
+    /// compatibility with older bundled binaries.
+    #[serde(default, rename = "Listen")]
+    pub listen: Vec<String>,
     #[serde(default)]
     pub peers: Vec<String>,
     /// AXL-specific: where the local HTTP bridge binds. Distinct from
     /// the underlay `ListenAddresses` (which accept mesh traffic).
     pub bridge_listen: String,
+    #[serde(default, rename = "bridge_addr")]
+    pub bridge_addr: String,
+    #[serde(default, rename = "api_port")]
+    pub api_port: u16,
+    #[serde(default, rename = "router_addr")]
+    pub router_addr: String,
+    #[serde(default, rename = "router_port")]
+    pub router_port: u16,
+    #[serde(default, rename = "a2a_addr")]
+    pub a2a_addr: String,
+    #[serde(default, rename = "a2a_port")]
+    pub a2a_port: u16,
     #[serde(default)]
     pub interface_peers: serde_json::Value,
     #[serde(default)]
@@ -126,7 +163,10 @@ pub fn write_node_config_json(path: &Path, config: &NodeConfig) -> Result<()> {
     let mut file_name = path
         .file_name()
         .ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::InvalidInput, "node-config path has no file name")
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "node-config path has no file name",
+            )
         })?
         .to_owned();
     file_name.push(".tmp");
@@ -152,7 +192,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let p = AxlPaths::under(dir.path());
         assert_eq!(p.private_pem, dir.path().join("axl").join("private.pem"));
-        assert_eq!(p.node_config_json, dir.path().join("axl").join("node-config.json"));
+        assert_eq!(
+            p.node_config_json,
+            dir.path().join("axl").join("node-config.json")
+        );
     }
 
     #[test]
@@ -172,8 +215,15 @@ mod tests {
         // Keys are PascalCase, matching AXL's expected schema.
         assert!(json.get("PrivateKeyPath").is_some());
         assert!(json.get("ListenAddresses").is_some());
+        assert!(json.get("Listen").is_some());
         assert!(json.get("Peers").is_some());
         assert!(json.get("BridgeListen").is_some());
+        assert_eq!(json.get("api_port").unwrap(), 9002);
+        assert_eq!(json.get("bridge_addr").unwrap(), "127.0.0.1");
+        assert_eq!(json.get("router_addr").unwrap(), "http://127.0.0.1");
+        assert_eq!(json.get("router_port").unwrap(), 9003);
+        assert_eq!(json.get("a2a_addr").unwrap(), "http://127.0.0.1");
+        assert_eq!(json.get("a2a_port").unwrap(), 9004);
 
         let peers = json.get("Peers").unwrap().as_array().unwrap();
         assert_eq!(peers.len(), 2);
@@ -183,6 +233,8 @@ mod tests {
         assert_eq!(back.private_key_path, nc.private_key_path);
         assert_eq!(back.peers, nc.peers);
         assert_eq!(back.bridge_listen, "http://127.0.0.1:9002");
+        assert_eq!(back.router_port, 9003);
+        assert_eq!(back.a2a_port, 9004);
     }
 
     #[test]
@@ -205,8 +257,15 @@ mod tests {
         let raw = serde_json::json!({
             "PrivateKeyPath": "/tmp/axl/private.pem",
             "ListenAddresses": ["tls://[::]:9001"],
+            "Listen": ["tls://[::]:9001"],
             "Peers": [],
             "BridgeListen": "http://127.0.0.1:9002",
+            "api_port": 9002,
+            "bridge_addr": "127.0.0.1",
+            "router_addr": "http://127.0.0.1",
+            "router_port": 9003,
+            "a2a_addr": "http://127.0.0.1",
+            "a2a_port": 9004,
             "InterfacePeers": {},
             "AllowedPublicKeys": [],
             "MulticastInterfaces": [],

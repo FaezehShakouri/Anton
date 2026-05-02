@@ -147,6 +147,19 @@ export interface TauriCommands {
     args: void;
     returns: { ok: boolean; message: string };
   };
+  agent_a2a_call_tool: {
+    args: {
+      request: {
+        peer: EnsName;
+        tool: "draft_reply" | "send_reply" | "summarize_conversation" | "handoff_to_human";
+        arguments?: Record<string, unknown>;
+      };
+    };
+    returns: {
+      ok: boolean;
+      response: unknown;
+    };
+  };
 
   settings_set_bootstrap_peers: {
     args: { peers: string[] };

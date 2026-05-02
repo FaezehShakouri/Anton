@@ -8,8 +8,8 @@ use std::time::Duration;
 use alloy::ens::namehash;
 use alloy::primitives::{keccak256, Address, Bytes, B256, U256};
 use alloy::providers::{Provider, ProviderBuilder};
-use alloy::signers::Signer;
 use alloy::signers::local::PrivateKeySigner;
+use alloy::signers::Signer;
 use anton_core::crypto::ed25519::Ed25519Identity;
 use anton_core::crypto::kdf::KdfParams;
 use anton_core::crypto::mnemonic::MnemonicPhrase;
@@ -17,8 +17,8 @@ use anton_core::crypto::vault::Vault;
 use anton_core::crypto::wallet::Wallet;
 use anton_core::settings::Settings;
 use serde::Serialize;
-use tauri::{AppHandle, Manager, Runtime};
 use tauri::State;
+use tauri::{AppHandle, Manager, Runtime};
 
 use crate::session::{IdentitySessionState, UnlockedIdentity};
 use crate::sidecar::{AxlSidecar, AxlSidecarState};
@@ -26,10 +26,8 @@ use crate::sidecar::{AxlSidecar, AxlSidecarState};
 /// Ethereum Sepolia chain id — EIP-155 txs from [`register_username`].
 const SEPOLIA_CHAIN_ID: u64 = 11155111;
 const DEFAULT_ENS_REGISTRY_ADDRESS: &str = "0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e";
-const DEFAULT_SEPOLIA_PUBLIC_RESOLVER_ADDRESS: &str =
-    "0xE99638b40E4Fff0129D56f03b55b6bbC4BBE49b5";
-const DEFAULT_SEPOLIA_NAME_WRAPPER_ADDRESS: &str =
-    "0x0635513f179D50A207757E05759CbD106d7dFcE8";
+const DEFAULT_SEPOLIA_PUBLIC_RESOLVER_ADDRESS: &str = "0xE99638b40E4Fff0129D56f03b55b6bbC4BBE49b5";
+const DEFAULT_SEPOLIA_NAME_WRAPPER_ADDRESS: &str = "0x0635513f179D50A207757E05759CbD106d7dFcE8";
 const DEFAULT_ENS_SEPOLIA_RPC_URL: &str = "https://ethereum-sepolia.publicnode.com";
 const DEFAULT_ENS_PARENT_NAME: &str = "anton.eth";
 
@@ -124,7 +122,10 @@ fn normalize_label(raw: &str) -> Result<String, String> {
     if label.len() < 3 || label.len() > 63 {
         return Err("Username must be between 3 and 63 characters.".into());
     }
-    if !label.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') {
+    if !label
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    {
         return Err("Username may only contain lowercase letters, digits, and hyphens.".into());
     }
     Ok(label)
@@ -154,7 +155,10 @@ fn ens_public_resolver_address() -> Result<Address, String> {
 }
 
 fn ens_name_wrapper_address() -> Result<Address, String> {
-    env_address("ENS_NAME_WRAPPER_ADDRESS", DEFAULT_SEPOLIA_NAME_WRAPPER_ADDRESS)
+    env_address(
+        "ENS_NAME_WRAPPER_ADDRESS",
+        DEFAULT_SEPOLIA_NAME_WRAPPER_ADDRESS,
+    )
 }
 
 fn ens_parent_name() -> String {
@@ -231,6 +235,9 @@ async fn boot_sidecar<R: Runtime>(
         );
     }
     let merged = crate::sidecar::merged_bootstrap_peers(app).await;
+    if let Some(a2a_state) = app.try_state::<crate::a2a::A2aServiceState>() {
+        a2a_state.start(app.clone());
+    }
     let sidecar = AxlSidecar::launch(app, ed25519, Some(merged))
         .await
         .map_err(|e| e.to_string())?;
@@ -359,7 +366,10 @@ pub async fn register_username<R: Runtime>(
         .wallet(gas_signer)
         .connect_http(rpc_url);
 
-    let pem = id.ed25519.to_public_pkcs8_pem().map_err(|e| e.to_string())?;
+    let pem = id
+        .ed25519
+        .to_public_pkcs8_pem()
+        .map_err(|e| e.to_string())?;
     let owner = id.wallet.address();
     let peer_id = id.ed25519.peer_id_hex();
     let (parent_node, labelhash, node) = ens_nodes_for_label(&label);
@@ -374,7 +384,11 @@ pub async fn register_username<R: Runtime>(
         .await
         .map_err(|e| format!("check ENS owner: {e}"))?;
     if existing_owner != Address::ZERO {
-        return Err(format!("{}.{} is already registered.", label, ens_parent_name()));
+        return Err(format!(
+            "{}.{} is already registered.",
+            label,
+            ens_parent_name()
+        ));
     }
 
     let parent_owner = registry
@@ -433,7 +447,13 @@ pub async fn register_username<R: Runtime>(
 
     let pending = if parent_owner == name_wrapper_addr {
         name_wrapper
-            .safeTransferFrom(operator, owner, ens_token_id(node), U256::from(1), Bytes::new())
+            .safeTransferFrom(
+                operator,
+                owner,
+                ens_token_id(node),
+                U256::from(1),
+                Bytes::new(),
+            )
             .send()
             .await
             .map_err(|e| format!("transfer wrapped ENS subname to user: {e}"))?
@@ -508,7 +528,10 @@ pub async fn update_current_ens_records<R: Runtime>(
 
     let owner = id.wallet.address();
     let peer_id = id.ed25519.peer_id_hex();
-    let pem = id.ed25519.to_public_pkcs8_pem().map_err(|e| e.to_string())?;
+    let pem = id
+        .ed25519
+        .to_public_pkcs8_pem()
+        .map_err(|e| e.to_string())?;
     let (_, _, node) = ens_nodes_for_label(&label);
 
     let registry = EnsRegistry::new(registry_addr, &provider);
