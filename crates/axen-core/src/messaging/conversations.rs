@@ -34,6 +34,8 @@ pub struct ChatMessage {
     pub state: MessageState,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reply_to: Option<ChatReply>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub agent_generated: bool,
 }
 
 /// Messages grouped by the remote ENS name (`alice.anton.eth`).

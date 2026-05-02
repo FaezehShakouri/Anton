@@ -18,6 +18,7 @@ use crate::sidecar::AxlSidecarState;
 
 const DEFAULT_LOCAL_BASE_URL: &str = "http://localhost:11434/v1";
 const DEFAULT_LOCAL_MODEL: &str = "Llama3";
+const DEFAULT_MAX_REPLIES_PER_HOUR: u32 = 30;
 const DEFAULT_SYSTEM_PROMPT: &str =
     "You are the user's personal chat assistant. Reply on their behalf in a concise, natural tone. Do not claim to be a separate AI unless asked.";
 
@@ -51,6 +52,7 @@ pub struct AgentSettingsResponse {
     pub model: String,
     pub base_url: String,
     pub system_prompt: String,
+    pub max_replies_per_hour: u32,
     pub api_key_configured: bool,
 }
 
@@ -61,6 +63,8 @@ pub struct AgentSettingsUpdate {
     pub model: String,
     pub base_url: String,
     pub system_prompt: String,
+    #[serde(default)]
+    pub max_replies_per_hour: Option<u32>,
     #[serde(default)]
     pub api_key: Option<String>,
     #[serde(default)]
@@ -73,6 +77,7 @@ struct AgentSettings {
     model: String,
     base_url: String,
     system_prompt: String,
+    max_replies_per_hour: u32,
     api_key: Option<String>,
 }
 
@@ -83,6 +88,7 @@ impl AgentSettings {
             model: DEFAULT_LOCAL_MODEL.to_string(),
             base_url: DEFAULT_LOCAL_BASE_URL.to_string(),
             system_prompt: DEFAULT_SYSTEM_PROMPT.to_string(),
+            max_replies_per_hour: DEFAULT_MAX_REPLIES_PER_HOUR,
             api_key: None,
         }
     }
@@ -93,6 +99,7 @@ impl AgentSettings {
             model: self.model.clone(),
             base_url: self.base_url.clone(),
             system_prompt: self.system_prompt.clone(),
+            max_replies_per_hour: self.max_replies_per_hour,
             api_key_configured: provider_api_key(self).is_some(),
         }
     }
@@ -103,6 +110,7 @@ impl AgentSettings {
 pub struct AgentConversationMode {
     pub peer: String,
     pub enabled: bool,
+    pub disabled_until: Option<i64>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -119,12 +127,29 @@ struct AgentStatusPayload {
     status: String,
     error: Option<String>,
     message_id: Option<String>,
+    agent_enabled: Option<bool>,
+    disabled_until: Option<i64>,
 }
 
 #[derive(Default)]
 pub struct AgentState {
     db_path: Mutex<Option<PathBuf>>,
     in_flight: Mutex<HashSet<String>>,
+}
+
+#[derive(Debug)]
+enum RateLimitError {
+    Exceeded {
+        max_per_hour: u32,
+        disabled_until: i64,
+    },
+    Storage(String),
+}
+
+impl From<String> for RateLimitError {
+    fn from(value: String) -> Self {
+        Self::Storage(value)
+    }
 }
 
 impl AgentState {
@@ -174,9 +199,17 @@ impl AgentState {
             model: update.model.trim().to_owned(),
             base_url: update.base_url.trim().trim_end_matches('/').to_owned(),
             system_prompt: update.system_prompt.trim().to_owned(),
+            max_replies_per_hour: update
+                .max_replies_per_hour
+                .unwrap_or(current.max_replies_per_hour)
+                .clamp(1, 500),
             api_key,
         };
+        let limit_changed = next.max_replies_per_hour != current.max_replies_per_hour;
         save_settings(&conn, &next).map_err(|e| e.to_string())?;
+        if limit_changed {
+            clear_agent_loop_limits(&conn).map_err(|e| e.to_string())?;
+        }
         Ok(next)
     }
 
@@ -184,23 +217,58 @@ impl AgentState {
         let conn = self.conn()?;
         let peer = normalize_chat_name(peer);
         conn.query_row(
-            "SELECT enabled FROM conversation_agent_modes WHERE peer = ?1",
+            "SELECT enabled, disabled_until FROM conversation_agent_modes WHERE peer = ?1",
             params![peer],
-            |row| row.get::<_, i64>(0),
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
         )
         .optional()
         .map_err(|e| e.to_string())
-        .map(|v| v.unwrap_or(0) != 0)
+        .map(|v| {
+            let Some((enabled, disabled_until)) = v else {
+                return false;
+            };
+            enabled != 0 && disabled_until <= now_ms()
+        })
     }
 
     fn set_conversation_enabled(&self, peer: &str, enabled: bool) -> Result<(), String> {
         let conn = self.conn()?;
         let peer = normalize_chat_name(peer);
+        if enabled {
+            let disabled_until = conn
+                .query_row(
+                    "SELECT disabled_until FROM conversation_agent_modes WHERE peer = ?1",
+                    params![peer.as_str()],
+                    |row| row.get::<_, i64>(0),
+                )
+                .optional()
+                .map_err(|e| e.to_string())?
+                .unwrap_or(0);
+            if disabled_until > now_ms() {
+                return Err(format!(
+                    "Agent mode is disabled for this chat until {} because the agent-to-agent limit was reached. Change the hourly limit in Settings to unlock it now.",
+                    disabled_until
+                ));
+            }
+        }
         conn.execute(
-            "INSERT INTO conversation_agent_modes(peer, enabled, updated_at)
-             VALUES (?1, ?2, ?3)
-             ON CONFLICT(peer) DO UPDATE SET enabled = excluded.enabled, updated_at = excluded.updated_at",
+            "INSERT INTO conversation_agent_modes(peer, enabled, disabled_until, updated_at)
+             VALUES (?1, ?2, 0, ?3)
+             ON CONFLICT(peer) DO UPDATE SET enabled = excluded.enabled, disabled_until = 0, updated_at = excluded.updated_at",
             params![peer, enabled as i64, now_ms()],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    fn disable_conversation_until(&self, peer: &str, disabled_until: i64) -> Result<(), String> {
+        let conn = self.conn()?;
+        let peer = normalize_chat_name(peer);
+        conn.execute(
+            "INSERT INTO conversation_agent_modes(peer, enabled, disabled_until, updated_at)
+             VALUES (?1, 0, ?2, ?3)
+             ON CONFLICT(peer) DO UPDATE SET enabled = 0, disabled_until = excluded.disabled_until, updated_at = excluded.updated_at",
+            params![peer, disabled_until, now_ms()],
         )
         .map_err(|e| e.to_string())?;
         Ok(())
@@ -216,6 +284,44 @@ impl AgentState {
              ON CONFLICT(peer, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
             params![normalize_chat_name(peer), value, now_ms()],
         );
+    }
+
+    fn record_rate_limited_send(&self, peer: &str, max_per_hour: u32) -> Result<(), RateLimitError> {
+        let conn = self.conn()?;
+        let peer = normalize_chat_name(peer);
+        let cutoff = now_ms() - 60 * 60 * 1000;
+        conn.execute(
+            "DELETE FROM agent_reply_log WHERE created_at < ?1",
+            params![cutoff],
+        )
+        .map_err(|e| RateLimitError::Storage(e.to_string()))?;
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM agent_reply_log WHERE peer = ?1 AND created_at >= ?2",
+                params![peer, cutoff],
+                |row| row.get(0),
+            )
+            .map_err(|e| RateLimitError::Storage(e.to_string()))?;
+        if count >= i64::from(max_per_hour) {
+            let oldest: i64 = conn
+                .query_row(
+                    "SELECT MIN(created_at) FROM agent_reply_log WHERE peer = ?1 AND created_at >= ?2",
+                    params![peer, cutoff],
+                    |row| row.get(0),
+                )
+                .map_err(|e| RateLimitError::Storage(e.to_string()))?;
+            let disabled_until = oldest + 60 * 60 * 1000;
+            return Err(RateLimitError::Exceeded {
+                max_per_hour,
+                disabled_until,
+            });
+        }
+        conn.execute(
+            "INSERT INTO agent_reply_log(peer, created_at) VALUES (?1, ?2)",
+            params![peer, now_ms()],
+        )
+        .map_err(|e| RateLimitError::Storage(e.to_string()))?;
+        Ok(())
     }
 
     fn enter_in_flight(&self, peer: &str) -> bool {
@@ -247,7 +353,21 @@ pub fn agent_get_conversation_mode(
 ) -> Result<AgentConversationMode, String> {
     let peer = normalize_chat_name(&peer);
     let enabled = state.conversation_enabled(&peer)?;
-    Ok(AgentConversationMode { peer, enabled })
+    let disabled_until = state
+        .conn()?
+        .query_row(
+            "SELECT disabled_until FROM conversation_agent_modes WHERE peer = ?1",
+            params![peer.as_str()],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?
+        .filter(|v| *v > now_ms());
+    Ok(AgentConversationMode {
+        peer,
+        enabled,
+        disabled_until,
+    })
 }
 
 #[tauri::command]
@@ -258,7 +378,11 @@ pub fn agent_set_conversation_mode(
 ) -> Result<AgentConversationMode, String> {
     let peer = normalize_chat_name(&peer);
     state.set_conversation_enabled(&peer, enabled)?;
-    Ok(AgentConversationMode { peer, enabled })
+    Ok(AgentConversationMode {
+        peer,
+        enabled,
+        disabled_until: None,
+    })
 }
 
 #[tauri::command]
@@ -288,7 +412,7 @@ pub fn maybe_auto_reply<R: Runtime>(
             if let Some(agent_state) = app.try_state::<AgentState>() {
                 agent_state.remember_last_error(&peer, &err);
             }
-            emit_status(&app, &peer, "error", Some(err), None);
+            emit_status(&app, &peer, "error", Some(err), None, None, None);
         }
     });
 }
@@ -296,7 +420,7 @@ pub fn maybe_auto_reply<R: Runtime>(
 async fn auto_reply<R: Runtime>(
     app: AppHandle<R>,
     peer: String,
-    _message: ChatMessage,
+    message: ChatMessage,
 ) -> Result<(), String> {
     let peer = normalize_chat_name(&peer);
     let agent_state = app
@@ -310,7 +434,7 @@ async fn auto_reply<R: Runtime>(
     }
 
     let result = async {
-        emit_status(&app, &peer, "thinking", None, None);
+        emit_status(&app, &peer, "thinking", None, None, None, None);
         let settings = agent_state.settings()?;
         let messaging = app
             .try_state::<MessagingState>()
@@ -319,6 +443,32 @@ async fn auto_reply<R: Runtime>(
             let g = messaging.inner.lock();
             g.conversations.messages_for_peer(&peer).to_vec()
         };
+        let is_agent_to_agent = message.agent_generated;
+        if is_agent_to_agent {
+            match agent_state.record_rate_limited_send(&peer, settings.max_replies_per_hour) {
+                Ok(()) => {}
+                Err(RateLimitError::Exceeded {
+                    max_per_hour,
+                    disabled_until,
+                }) => {
+                    agent_state.disable_conversation_until(&peer, disabled_until)?;
+                    let msg = format!(
+                        "Agent-to-agent reply limit reached ({max_per_hour}/hour). Switched this chat to Manual until the limit window clears."
+                    );
+                    emit_status(
+                        &app,
+                        &peer,
+                        "disabled",
+                        Some(msg.clone()),
+                        None,
+                        Some(false),
+                        Some(disabled_until),
+                    );
+                    return Ok(());
+                }
+                Err(RateLimitError::Storage(e)) => return Err(e),
+            }
+        }
         let prompt = build_provider_messages(&settings, &recent);
         let reply = complete_chat(&settings, prompt).await?;
         if reply.trim().is_empty() {
@@ -348,9 +498,10 @@ async fn auto_reply<R: Runtime>(
             reply.trim().to_string(),
             None,
             true,
+            true,
         )
         .await?;
-        emit_status(&app, &peer, "sent", None, Some(sent.id));
+        emit_status(&app, &peer, "sent", None, Some(sent.id), None, None);
         Ok(())
     }
     .await;
@@ -368,12 +519,14 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
             model TEXT NOT NULL,
             base_url TEXT NOT NULL,
             system_prompt TEXT NOT NULL,
+            max_replies_per_hour INTEGER NOT NULL DEFAULT 30,
             api_key TEXT,
             updated_at INTEGER NOT NULL
         );
         CREATE TABLE IF NOT EXISTS conversation_agent_modes (
             peer TEXT PRIMARY KEY,
             enabled INTEGER NOT NULL,
+            disabled_until INTEGER NOT NULL DEFAULT 0,
             updated_at INTEGER NOT NULL
         );
         CREATE TABLE IF NOT EXISTS agent_memory (
@@ -383,8 +536,28 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
             updated_at INTEGER NOT NULL,
             PRIMARY KEY(peer, key)
         );
+        CREATE TABLE IF NOT EXISTS agent_reply_log (
+            peer TEXT NOT NULL,
+            created_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_agent_reply_log_peer_created
+            ON agent_reply_log(peer, created_at);
         ",
     )?;
+    let columns = table_columns(conn, "agent_settings")?;
+    if !columns.contains(&"max_replies_per_hour".to_string()) {
+        conn.execute(
+            "ALTER TABLE agent_settings ADD COLUMN max_replies_per_hour INTEGER NOT NULL DEFAULT 30",
+            [],
+        )?;
+    }
+    let mode_columns = table_columns(conn, "conversation_agent_modes")?;
+    if !mode_columns.contains(&"disabled_until".to_string()) {
+        conn.execute(
+            "ALTER TABLE conversation_agent_modes ADD COLUMN disabled_until INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
+    }
     let count: i64 = conn.query_row("SELECT COUNT(*) FROM agent_settings", [], |row| row.get(0))?;
     if count == 0 {
         save_settings(conn, &AgentSettings::defaults())?;
@@ -394,8 +567,9 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
 
 fn load_settings(conn: &Connection) -> rusqlite::Result<AgentSettings> {
     conn.query_row(
-        "SELECT provider, model, base_url, system_prompt, api_key FROM agent_settings WHERE id = 1",
-        [],
+        "SELECT provider, model, base_url, system_prompt, api_key, COALESCE(max_replies_per_hour, ?1)
+         FROM agent_settings WHERE id = 1",
+        params![DEFAULT_MAX_REPLIES_PER_HOUR],
         |row| {
             Ok(AgentSettings {
                 provider: AgentProviderKind::from_db(row.get::<_, String>(0)?.as_str()),
@@ -403,21 +577,30 @@ fn load_settings(conn: &Connection) -> rusqlite::Result<AgentSettings> {
                 base_url: row.get(2)?,
                 system_prompt: row.get(3)?,
                 api_key: row.get(4)?,
+                max_replies_per_hour: row.get::<_, i64>(5)? as u32,
             })
         },
     )
 }
 
 fn save_settings(conn: &Connection, settings: &AgentSettings) -> rusqlite::Result<()> {
+    let columns = table_columns(conn, "agent_settings")?;
+    if !columns.iter().any(|c| c == "max_replies_per_hour") {
+        conn.execute(
+            "ALTER TABLE agent_settings ADD COLUMN max_replies_per_hour INTEGER NOT NULL DEFAULT 30",
+            [],
+        )?;
+    }
     conn.execute(
-        "INSERT INTO agent_settings(id, provider, model, base_url, system_prompt, api_key, updated_at)
-         VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6)
+        "INSERT INTO agent_settings(id, provider, model, base_url, system_prompt, api_key, max_replies_per_hour, updated_at)
+         VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7)
          ON CONFLICT(id) DO UPDATE SET
            provider = excluded.provider,
            model = excluded.model,
            base_url = excluded.base_url,
            system_prompt = excluded.system_prompt,
            api_key = excluded.api_key,
+           max_replies_per_hour = excluded.max_replies_per_hour,
            updated_at = excluded.updated_at",
         params![
             settings.provider.as_str(),
@@ -425,10 +608,23 @@ fn save_settings(conn: &Connection, settings: &AgentSettings) -> rusqlite::Resul
             settings.base_url,
             settings.system_prompt,
             settings.api_key,
+            settings.max_replies_per_hour,
             now_ms(),
         ],
     )?;
     Ok(())
+}
+
+fn clear_agent_loop_limits(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute("DELETE FROM agent_reply_log", [])?;
+    conn.execute("UPDATE conversation_agent_modes SET disabled_until = 0", [])?;
+    Ok(())
+}
+
+fn table_columns(conn: &Connection, table: &str) -> rusqlite::Result<Vec<String>> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+    rows.collect()
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -549,6 +745,8 @@ fn emit_status<R: Runtime>(
     status: &str,
     error: Option<String>,
     message_id: Option<String>,
+    agent_enabled: Option<bool>,
+    disabled_until: Option<i64>,
 ) {
     let _ = app.emit(
         "agent:status",
@@ -557,6 +755,8 @@ fn emit_status<R: Runtime>(
             status: status.to_string(),
             error,
             message_id,
+            agent_enabled,
+            disabled_until,
         },
     );
 }
@@ -581,12 +781,49 @@ mod tests {
             model: "Llama3".into(),
             base_url: "http://localhost:11434/v1".into(),
             system_prompt: "short".into(),
+            max_replies_per_hour: 12,
             api_key: Some("secret".into()),
         };
         save_settings(&conn, &next).unwrap();
         let loaded = load_settings(&conn).unwrap();
         assert!(matches!(loaded.provider, AgentProviderKind::LocalOpenAi));
         assert_eq!(loaded.model, "Llama3");
+        assert_eq!(loaded.max_replies_per_hour, 12);
         assert_eq!(loaded.api_key.as_deref(), Some("secret"));
+    }
+
+    #[test]
+    fn hourly_reply_limit_is_enforced() {
+        let state = AgentState::default();
+        let conn = Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "anton-agent-rate-limit-{}.sqlite",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        let conn = Connection::open(&path).unwrap();
+        migrate(&conn).unwrap();
+        *state.db_path.lock() = Some(path);
+
+        state.record_rate_limited_send("alice.anton.eth", 2).unwrap();
+        state.record_rate_limited_send("alice.anton.eth", 2).unwrap();
+        let err = state
+            .record_rate_limited_send("alice.anton.eth", 2)
+            .unwrap_err();
+        match err {
+            RateLimitError::Exceeded {
+                max_per_hour,
+                disabled_until,
+            } => {
+                assert_eq!(max_per_hour, 2);
+                assert!(disabled_until > now_ms());
+            }
+            RateLimitError::Storage(e) => panic!("unexpected storage error: {e}"),
+        }
+        let cleanup_path = state.db_path.lock().clone();
+        if let Some(path) = cleanup_path {
+            let _ = std::fs::remove_file(path);
+        }
     }
 }

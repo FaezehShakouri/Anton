@@ -16,6 +16,7 @@ export function SettingsPage() {
   const [agentModel, setAgentModel] = useState("Llama3");
   const [agentBaseUrl, setAgentBaseUrl] = useState("http://localhost:11434/v1");
   const [agentSystemPrompt, setAgentSystemPrompt] = useState("");
+  const [agentMaxRepliesPerHour, setAgentMaxRepliesPerHour] = useState(30);
   const [agentApiKey, setAgentApiKey] = useState("");
   const [agentKeyConfigured, setAgentKeyConfigured] = useState(false);
   const [agentMsg, setAgentMsg] = useState<string | null>(null);
@@ -35,6 +36,7 @@ export function SettingsPage() {
         setAgentModel(settings.model);
         setAgentBaseUrl(settings.baseUrl);
         setAgentSystemPrompt(settings.systemPrompt);
+        setAgentMaxRepliesPerHour(settings.maxRepliesPerHour);
         setAgentKeyConfigured(settings.apiKeyConfigured);
       } catch (e) {
         setAgentMsg(e instanceof Error ? e.message : String(e));
@@ -72,6 +74,7 @@ export function SettingsPage() {
           model: agentModel,
           baseUrl: agentBaseUrl,
           systemPrompt: agentSystemPrompt,
+          maxRepliesPerHour: agentMaxRepliesPerHour,
           ...(agentApiKey.trim() ? { apiKey: agentApiKey.trim() } : {}),
         },
       });
@@ -189,6 +192,17 @@ export function SettingsPage() {
               value={agentApiKey}
               onChange={(e) => setAgentApiKey(e.target.value)}
               placeholder={agentProvider === "open_router" ? "Uses OPENROUTER_API_KEY if blank" : "Optional"}
+              className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-emerald-600 focus:outline-none"
+            />
+          </label>
+          <label className="block text-xs font-medium text-slate-300">
+            Max agent replies per hour per chat
+            <input
+              type="number"
+              min={1}
+              max={500}
+              value={agentMaxRepliesPerHour}
+              onChange={(e) => setAgentMaxRepliesPerHour(Number(e.target.value) || 1)}
               className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-emerald-600 focus:outline-none"
             />
           </label>

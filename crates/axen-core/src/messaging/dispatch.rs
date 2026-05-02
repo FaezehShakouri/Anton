@@ -89,6 +89,11 @@ impl MessageHandler for ChatTextV1Handler {
             .map(serde_json::from_value::<ChatReply>)
             .transpose()
             .map_err(|e| AntonError::InvalidEnvelopeBody(format!("invalid replyTo: {e}")))?;
+        let agent_generated = envelope
+            .body
+            .get("agentGenerated")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         let peer = Conversations::conversation_key_from_inbound(&envelope.from);
         let id = format!("{}:{}:{}", peer, envelope.nonce, envelope.ts);
         let msg = ChatMessage {
@@ -99,6 +104,7 @@ impl MessageHandler for ChatTextV1Handler {
             ts: envelope.ts,
             state: MessageState::Received,
             reply_to,
+            agent_generated,
         };
         ctx.conversations.append_message(&peer, msg.clone());
         Ok(vec![MessagingEvent::ChatMessageReceived { peer, message: msg }])
@@ -184,7 +190,7 @@ mod tests {
             avatar: None,
             description: None,
         };
-        let body = chat_text_v1_body_json("hello", None);
+        let body = chat_text_v1_body_json("hello", None, false);
         let body_vec = serde_json::to_vec(&body).unwrap();
         let fields = EnvelopeFields {
             from: "alice.anton.eth",
@@ -223,7 +229,7 @@ mod tests {
             avatar: None,
             description: None,
         };
-        let body = chat_text_v1_body_json("a", None);
+        let body = chat_text_v1_body_json("a", None, false);
         let body_vec = serde_json::to_vec(&body).unwrap();
         let mk_env = |nonce: u64| {
             let fields = EnvelopeFields {
@@ -265,7 +271,7 @@ mod tests {
             avatar: None,
             description: None,
         };
-        let body = chat_text_v1_body_json("x", None);
+        let body = chat_text_v1_body_json("x", None, false);
         let body_vec = serde_json::to_vec(&body).unwrap();
         let fields = EnvelopeFields {
             from: "alice.anton.eth",

@@ -19,6 +19,8 @@ type AgentStatus = {
   status: "thinking" | "sent" | "error" | string;
   error?: string | null;
   messageId?: string | null;
+  agentEnabled?: boolean | null;
+  disabledUntil?: number | null;
 };
 
 function toReply(message: ChatMessage): ChatReply {
@@ -126,6 +128,9 @@ export function ChatPage() {
       } else if (payload.status === "sent") {
         setAgentStatus("Agent replied");
         void refreshMessages(payload.peer);
+      } else if (payload.status === "disabled") {
+        setAgentEnabled(false);
+        setAgentStatus(payload.error ?? "Agent mode switched to Manual");
       } else if (payload.status === "error") {
         setAgentStatus(payload.error ?? "Agent reply failed");
       }

@@ -110,6 +110,7 @@ export interface TauriCommands {
       model: string;
       baseUrl: string;
       systemPrompt: string;
+      maxRepliesPerHour: number;
       apiKeyConfigured: boolean;
     };
   };
@@ -120,6 +121,7 @@ export interface TauriCommands {
         model: string;
         baseUrl: string;
         systemPrompt: string;
+        maxRepliesPerHour?: number;
         apiKey?: string;
         clearApiKey?: boolean;
       };
@@ -129,16 +131,17 @@ export interface TauriCommands {
       model: string;
       baseUrl: string;
       systemPrompt: string;
+      maxRepliesPerHour: number;
       apiKeyConfigured: boolean;
     };
   };
   agent_get_conversation_mode: {
     args: { peer: EnsName };
-    returns: { peer: EnsName; enabled: boolean };
+    returns: { peer: EnsName; enabled: boolean; disabledUntil?: number };
   };
   agent_set_conversation_mode: {
     args: { peer: EnsName; enabled: boolean };
-    returns: { peer: EnsName; enabled: boolean };
+    returns: { peer: EnsName; enabled: boolean; disabledUntil?: number };
   };
   agent_test_provider: {
     args: void;

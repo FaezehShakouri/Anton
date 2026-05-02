@@ -41,6 +41,7 @@ export interface Envelope<TBody = unknown> {
 export interface ChatTextV1Body {
   text: string;
   replyTo?: ChatReply;
+  agentGenerated?: boolean;
 }
 
 export interface ChatReply {
@@ -67,6 +68,7 @@ export interface ChatMessage {
   ts: number;
   state: MessageState;
   replyTo?: ChatReply;
+  agentGenerated?: boolean;
 }
 
 /** IPC JSON envelope + hex signature (`camelCase`); mirrors Rust `WireEnvelope`. */

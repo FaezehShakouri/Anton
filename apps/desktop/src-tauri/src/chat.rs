@@ -180,6 +180,7 @@ pub async fn chat_send<R: Runtime>(
         text,
         reply_to,
         false,
+        false,
     )
     .await
 }
@@ -195,6 +196,7 @@ pub async fn send_chat_message<R: Runtime>(
     text: String,
     reply_to: Option<ChatReply>,
     open_if_missing: bool,
+    agent_generated: bool,
 ) -> Result<ChatSendResponse, String> {
     let Some(unlocked) = session.snapshot() else {
         return Err("Unlock your vault before sending messages.".into());
@@ -235,7 +237,7 @@ pub async fn send_chat_message<R: Runtime>(
         n
     };
 
-    let body = chat_text_v1_body_json(&text, reply_to.as_ref());
+    let body = chat_text_v1_body_json(&text, reply_to.as_ref(), agent_generated);
     let body_vec = serde_json::to_vec(&body).map_err(|e| e.to_string())?;
 
     let fields = EnvelopeFields {
@@ -272,6 +274,7 @@ pub async fn send_chat_message<R: Runtime>(
             ts,
             state: MessageState::Pending,
             reply_to,
+            agent_generated,
         };
         g.conversations.append_message(&to_key, pending);
     }

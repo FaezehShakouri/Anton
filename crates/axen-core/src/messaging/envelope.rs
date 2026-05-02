@@ -36,10 +36,16 @@ impl WireEnvelope {
 }
 
 /// Build the JSON body for `chat.text.v1` (matches TS `ChatTextV1Body`).
-pub fn chat_text_v1_body_json(text: impl Into<String>, reply_to: Option<&ChatReply>) -> serde_json::Value {
-    match reply_to {
-        Some(reply_to) => json!({ "text": text.into(), "replyTo": reply_to }),
-        None => json!({ "text": text.into() }),
+pub fn chat_text_v1_body_json(
+    text: impl Into<String>,
+    reply_to: Option<&ChatReply>,
+    agent_generated: bool,
+) -> serde_json::Value {
+    match (reply_to, agent_generated) {
+        (Some(reply_to), true) => json!({ "text": text.into(), "replyTo": reply_to, "agentGenerated": true }),
+        (Some(reply_to), false) => json!({ "text": text.into(), "replyTo": reply_to }),
+        (None, true) => json!({ "text": text.into(), "agentGenerated": true }),
+        (None, false) => json!({ "text": text.into() }),
     }
 }
 
