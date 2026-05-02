@@ -7,6 +7,3 @@
 [submodule "contracts/lib/ens-contracts"]
 	path = contracts/lib/ens-contracts
 	url = https://github.com/ensdomains/ens-contracts
-[submodule "contracts/lib/durin"]
-	path = contracts/lib/durin
-	url = https://github.com/namestonehq/durin
