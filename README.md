@@ -8,7 +8,7 @@ Anton is a desktop messenger where every user is `name.anton.eth`. ENS text reco
 
 - [`apps/desktop`](apps/desktop) — Tauri 2 + React + TypeScript desktop app. The Rust shell under `src-tauri/` wraps [`crates/axen-core`](crates/axen-core) for crypto, ENS, messaging, and AXL transport. UI: Onboarding, Chat (ENS resolve + ephemeral sessions + signed send), Settings (topology + bootstrap overrides).
 - [`apps/agent`](apps/agent) — `anton-agent` binary scaffold (`cargo run -p anton-agent`). Full A2A + `MemoryBackend` persistence is stubbed; set `ANTON_DEMO_AGENT=1` for the demo banner.
-- [`contracts`](contracts) — Foundry workspace housing `ChatRegistrar.sol`, the Durin-derived L2 registrar that mints `*.anton.eth` subnames with `addr`, `axl_peer_id`, and `axl_pubkey` text records in a single transaction. Deployed to Base Sepolia for the demo, Base for production.
+- [`contracts`](contracts) — Foundry workspace housing an optional L1 ENS `ChatRegistrar.sol` helper for `*.anton.eth` subnames. The desktop app can also register directly through the Sepolia ENS Registry + Public Resolver.
 - [`packages/shared-types`](packages/shared-types) — TypeScript types shared between the Tauri Rust IPC surface and the React UI (envelopes, identities, IPC commands).
 - [`packages/axl-client-ts`](packages/axl-client-ts) — Reusable TypeScript client for the AXL HTTP bridge (`127.0.0.1:9002`). Used by the desktop UI and any future Node-side tooling/tests.
 - [`crates/axen-core`](crates/axen-core) — Shared Rust library: crypto, vault, ENS (incl. `anton.eth` → `axl_bootstrap_peers`), EIP-712 messaging, `MemoryBackend` + stub `ZeroGStorageMemory`.
@@ -43,9 +43,11 @@ Chat messages and open conversation handles live exclusively in RAM and are drop
 | `ENS_RPC_URL` | L1 JSON-RPC for ENS (`ens_resolve`, `/recv` verification, `anton.eth` → `axl_bootstrap_peers`). Overrides defaults. |
 | `ENS_MAINNET_RPC_URL` | Legacy alias for `ENS_RPC_URL` (same behavior). |
 | `ENS_UNIVERSAL_RESOLVER_ADDRESS` | Optional Universal Resolver contract on that L1 (defaults to the standard ENS deployment). |
-| `ANTON_CHAT_REGISTRAR` | Base Sepolia `ChatRegistrar` for onboarding `register_username` / `available`. |
-| `ANTON_REGISTRATION_GAS_PRIVATE_KEY` | Hex private key of the wallet that **pays gas** for `register_username` on Base Sepolia (e.g. deployment / `anton.eth` operator). The registered subname **`owner_`** is still the user’s derived address. |
-| `ANTON_BASE_SEPOLIA_RPC_URL` | JSON-RPC for registration txs (defaults to public Base Sepolia). |
+| `ANTON_ENS_REGISTRATION_PRIVATE_KEY` | Hex private key of the Sepolia wallet that owns/manages `ANTON_ENS_PARENT_NAME` and pays gas for direct ENS registration. The registered subname owner is still the user’s derived address. |
+| `ANTON_ENS_PARENT_NAME` | Parent ENS name for usernames (defaults to `anton.eth`). |
+| `ENS_REGISTRY_ADDRESS` | Optional ENS Registry override (defaults to Sepolia ENS Registry). |
+| `ENS_PUBLIC_RESOLVER_ADDRESS` | Optional Public Resolver override (defaults to Sepolia Public Resolver). |
+| `ENS_NAME_WRAPPER_ADDRESS` | Optional Name Wrapper override (defaults to Sepolia Name Wrapper). Used when the parent name is wrapped. |
 | `ANTON_DEMO_AGENT` | Set to `1` on `anton-agent` for the demo placeholder log line. |
 
 ## Hackathon / demo
