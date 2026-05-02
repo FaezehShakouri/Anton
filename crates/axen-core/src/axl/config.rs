@@ -163,8 +163,8 @@ mod tests {
         let cfg = AxlRuntimeConfig::new(
             paths,
             vec![
-                "tls://bootstrap-1.anton.chat:9001".to_owned(),
-                "tls://bootstrap-2.anton.chat:9001".to_owned(),
+                "tls://34.46.48.224:9001".to_owned(),
+                "tls://136.111.135.206:9001".to_owned(),
             ],
         );
         let nc = cfg.to_node_config();

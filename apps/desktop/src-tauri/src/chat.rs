@@ -250,6 +250,13 @@ pub async fn chat_send<R: Runtime>(
         .clone()
         .ok_or("AXL sidecar is not running.")?;
     let transport = sidecar.transport();
+    let topology = transport.topology().await.map_err(|e| e.to_string())?;
+    if topology.connected_peers == 0 {
+        return Err(
+            "AXL is running but not connected to any peers. Add a reachable bootstrap peer in Settings or start a bootstrap node before sending."
+                .into(),
+        );
+    }
     match transport.send(&dest_peer, &wire).await {
         Ok(()) => {
             let mut g = messaging.inner.lock();

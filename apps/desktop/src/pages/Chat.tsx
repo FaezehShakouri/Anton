@@ -122,6 +122,7 @@ export function ChatPage() {
       setDraft("");
       await refreshMessages(activeNorm);
     } catch (e) {
+      await refreshMessages(activeNorm);
       setResolveError(e instanceof Error ? e.message : String(e));
     } finally {
       setSendBusy(false);

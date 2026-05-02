@@ -40,10 +40,9 @@ pub const SIDECAR_NAME: &str = "axl";
 /// Default fallback bootstrap peers, baked into the binary so a
 /// first-run install can connect even when the ENS lookup of
 /// `anton.eth → axl_bootstrap_peers` fails (e.g. RPC outage). The real
-/// host names land in the `bootstrap-nodes` plan step; until then this
-/// is just a placeholder we ship so the path is wired up.
+/// bootstrap nodes used when ENS/settings do not provide overrides.
 pub const FALLBACK_BOOTSTRAP_PEERS: &[&str] =
-    &["tls://bootstrap-1.anton.chat:9001", "tls://bootstrap-2.anton.chat:9001"];
+    &["tls://34.46.48.224:9001", "tls://136.111.135.206:9001"];
 
 /// Baked-in fallbacks, then ENS `anton.eth` → `axl_bootstrap_peers` (same RPC/UR as
 /// [`anton_core::ens::ens_rpc_and_resolver_config`]), then `settings.json` `bootstrap_peers`,
