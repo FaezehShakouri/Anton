@@ -275,7 +275,7 @@ export function ChatPage() {
         request: {
           peer: activeNorm,
           tool,
-          arguments: { peer: activeNorm, ...extra },
+          arguments: extra,
         },
       });
       setA2aStatus(formatA2aResponse(tool, res.response));

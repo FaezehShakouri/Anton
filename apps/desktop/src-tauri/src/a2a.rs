@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use anton_core::axl::{DEFAULT_AXL_A2A_PORT, DEFAULT_AXL_ROUTER_PORT};
 use anton_core::ens::normalize_chat_name;
+use anton_core::settings::Settings;
 use anton_core::transport::PeerId;
 use axum::extract::State as AxumState;
 use axum::response::IntoResponse;
@@ -12,7 +13,7 @@ use axum::{Json, Router};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tauri::{async_runtime::JoinHandle, AppHandle, Runtime, State};
+use tauri::{async_runtime::JoinHandle, AppHandle, Manager, Runtime, State};
 
 use crate::agent;
 use crate::chat::ResolverState;
@@ -323,6 +324,7 @@ pub struct A2aCallToolResponse {
 
 #[tauri::command]
 pub async fn agent_a2a_call_tool(
+    app: AppHandle,
     resolver: State<'_, ResolverState>,
     sidecar_state: State<'_, AxlSidecarState>,
     request: A2aCallToolRequest,
@@ -338,6 +340,8 @@ pub async fn agent_a2a_call_tool(
         .lock()
         .clone()
         .ok_or_else(|| "AXL sidecar is not running.".to_string())?;
+    let local_ens = local_ens_name(&app)?;
+    let tool_arguments = with_remote_conversation_peer(request.arguments, &local_ens)?;
 
     let request_id = uuid::Uuid::new_v4().to_string();
     let mcp = json!({
@@ -348,7 +352,7 @@ pub async fn agent_a2a_call_tool(
             "id": request_id,
             "params": {
                 "name": request.tool,
-                "arguments": request.arguments
+                "arguments": tool_arguments
             }
         }
     });
@@ -373,6 +377,27 @@ pub async fn agent_a2a_call_tool(
     Ok(A2aCallToolResponse { ok: true, response })
 }
 
+fn local_ens_name<R: Runtime>(app: &AppHandle<R>) -> Result<String, String> {
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let settings = Settings::load_or_default(&Settings::default_path(&dir)).map_err(|e| e.to_string())?;
+    settings
+        .last_username
+        .map(|name| normalize_chat_name(&name))
+        .ok_or_else(|| "Register or save your ENS name before calling remote A2A tools.".to_string())
+}
+
+fn with_remote_conversation_peer(arguments: Value, local_ens: &str) -> Result<Value, String> {
+    let mut map = match arguments {
+        Value::Null => serde_json::Map::new(),
+        Value::Object(map) => map,
+        _ => return Err("A2A tool arguments must be a JSON object.".to_string()),
+    };
+    // The remote agent should act on its local conversation with this user,
+    // not on the destination ENS selected in our UI.
+    map.insert("peer".to_string(), Value::String(local_ens.to_string()));
+    Ok(Value::Object(map))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -390,5 +415,13 @@ mod tests {
         assert!(names.contains(&"send_reply"));
         assert!(names.contains(&"summarize_conversation"));
         assert!(names.contains(&"handoff_to_human"));
+    }
+
+    #[test]
+    fn remote_tool_arguments_use_local_ens_as_peer() {
+        let args = with_remote_conversation_peer(json!({ "peer": "wrong.anton.eth", "text": "hello" }), "me.anton.eth")
+            .unwrap();
+        assert_eq!(args.get("peer").and_then(Value::as_str), Some("me.anton.eth"));
+        assert_eq!(args.get("text").and_then(Value::as_str), Some("hello"));
     }
 }
