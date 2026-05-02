@@ -5,13 +5,16 @@ use std::sync::Arc;
 
 use anton_core::crypto::eip712::{sign_envelope, EnvelopeFields};
 use anton_core::ens::{normalize_chat_name, IdentityResolver, ResolvedIdentity};
-use anton_core::messaging::{chat_text_v1_body_json, ChatMessage, ChatReply, MessageState, WireEnvelope};
+use anton_core::messaging::{
+    chat_text_v1_body_json, ChatMessage, ChatReply, MessageState, WireEnvelope,
+};
 use anton_core::settings::Settings;
 use anton_core::transport::{PeerId, Transport};
 use parking_lot::Mutex;
 use serde::Serialize;
 use tauri::{AppHandle, Manager, Runtime, State};
 
+use crate::chat_store::ChatStoreState;
 use crate::messaging::MessagingState;
 use crate::session::IdentitySessionState;
 use crate::sidecar::AxlSidecarState;
@@ -95,20 +98,20 @@ pub async fn ens_resolve(
     name: String,
 ) -> Result<IdentityIpc, String> {
     let trimmed = name.trim();
-    tracing::debug!(target = "anton::chat", requested = trimmed, "ens_resolve:begin");
-    let id = resolver
-        .0
-        .resolve_forward(trimmed)
-        .await
-        .map_err(|e| {
-            tracing::debug!(
-                target = "anton::chat",
-                requested = trimmed,
-                error = %e,
-                "ens_resolve:error",
-            );
-            e.to_string()
-        })?;
+    tracing::debug!(
+        target = "anton::chat",
+        requested = trimmed,
+        "ens_resolve:begin"
+    );
+    let id = resolver.0.resolve_forward(trimmed).await.map_err(|e| {
+        tracing::debug!(
+            target = "anton::chat",
+            requested = trimmed,
+            error = %e,
+            "ens_resolve:error",
+        );
+        e.to_string()
+    })?;
     tracing::debug!(
         target = "anton::chat",
         resolved_ens = id.ens.as_str(),
@@ -121,12 +124,22 @@ pub async fn ens_resolve(
 pub fn chat_open(
     chat: State<'_, ChatState>,
     messaging: State<'_, MessagingState>,
+    chat_store: State<'_, ChatStoreState>,
     ens: String,
 ) -> Result<ChatOpenResponse, String> {
     let key = normalize_chat_name(&ens);
     chat.inner.lock().open.insert(key.clone());
-    let g = messaging.inner.lock();
-    let messages = g.conversations.messages_for_peer(&key).to_vec();
+    let messages = chat_store.messages_for_peer(&key)?;
+    let max_nonce = chat_store.max_received_nonce(&key)?;
+    let mut g = messaging.inner.lock();
+    g.conversations
+        .by_peer
+        .insert(key.clone(), messages.clone());
+    if max_nonce > 0 {
+        g.conversations
+            .last_nonce_from
+            .insert(key.clone(), max_nonce);
+    }
     Ok(ChatOpenResponse { messages })
 }
 
@@ -147,14 +160,17 @@ pub fn chat_close(
 pub fn chat_history(
     chat: State<'_, ChatState>,
     messaging: State<'_, MessagingState>,
+    chat_store: State<'_, ChatStoreState>,
     ens: String,
 ) -> Result<Vec<ChatMessage>, String> {
     let key = normalize_chat_name(&ens);
     if !chat.inner.lock().open.contains(&key) {
         return Err("Open this conversation first (ephemeral session).".into());
     }
-    let g = messaging.inner.lock();
-    Ok(g.conversations.messages_for_peer(&key).to_vec())
+    let messages = chat_store.messages_for_peer(&key)?;
+    let mut g = messaging.inner.lock();
+    g.conversations.by_peer.insert(key, messages.clone());
+    Ok(messages)
 }
 
 #[tauri::command]
@@ -164,6 +180,7 @@ pub async fn chat_send<R: Runtime>(
     resolver: State<'_, ResolverState>,
     session: State<'_, IdentitySessionState>,
     messaging: State<'_, MessagingState>,
+    chat_store: State<'_, ChatStoreState>,
     sidecar_state: State<'_, AxlSidecarState>,
     to: String,
     text: String,
@@ -175,6 +192,7 @@ pub async fn chat_send<R: Runtime>(
         &resolver,
         &session,
         &messaging,
+        &chat_store,
         &sidecar_state,
         to,
         text,
@@ -191,6 +209,7 @@ pub async fn send_chat_message<R: Runtime>(
     resolver: &ResolverState,
     session: &IdentitySessionState,
     messaging: &MessagingState,
+    chat_store: &ChatStoreState,
     sidecar_state: &AxlSidecarState,
     to: String,
     text: String,
@@ -264,20 +283,21 @@ pub async fn send_chat_message<R: Runtime>(
     let wire = serde_json::to_vec(&envelope).map_err(|e| e.to_string())?;
 
     let msg_id = uuid::Uuid::new_v4().to_string();
+    let pending = ChatMessage {
+        id: msg_id.clone(),
+        from: from_norm.clone(),
+        to: to_key.clone(),
+        text: text.clone(),
+        ts,
+        state: MessageState::Pending,
+        reply_to,
+        agent_generated,
+    };
     {
         let mut g = messaging.inner.lock();
-        let pending = ChatMessage {
-            id: msg_id.clone(),
-            from: from_norm.clone(),
-            to: to_key.clone(),
-            text: text.clone(),
-            ts,
-            state: MessageState::Pending,
-            reply_to,
-            agent_generated,
-        };
-        g.conversations.append_message(&to_key, pending);
+        g.conversations.append_message(&to_key, pending.clone());
     }
+    chat_store.save_message(&to_key, &pending, Some(nonce))?;
 
     let sidecar = sidecar_state
         .sidecar
@@ -297,11 +317,15 @@ pub async fn send_chat_message<R: Runtime>(
             let mut g = messaging.inner.lock();
             g.conversations
                 .update_message_state(&to_key, &msg_id, MessageState::Sent);
+            drop(g);
+            chat_store.update_message_state(&to_key, &msg_id, MessageState::Sent)?;
         }
         Err(e) => {
             let mut g = messaging.inner.lock();
             g.conversations
                 .update_message_state(&to_key, &msg_id, MessageState::Failed);
+            drop(g);
+            let _ = chat_store.update_message_state(&to_key, &msg_id, MessageState::Failed);
             return Err(e.to_string());
         }
     }

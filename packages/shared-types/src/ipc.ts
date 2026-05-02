@@ -102,6 +102,10 @@ export interface TauriCommands {
     args: { ens: EnsName };
     returns: ChatMessage[];
   };
+  chat_list_conversations: {
+    args: void;
+    returns: EnsName[];
+  };
 
   agent_get_settings: {
     args: void;

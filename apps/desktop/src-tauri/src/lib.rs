@@ -4,6 +4,7 @@ use tauri::RunEvent;
 mod a2a;
 mod agent;
 mod chat;
+mod chat_store;
 mod commands;
 mod messaging;
 mod onboarding;
@@ -17,6 +18,7 @@ use session::IdentitySessionState;
 use a2a::A2aServiceState;
 use agent::AgentState;
 use chat::{ChatState, ResolverState};
+use chat_store::ChatStoreState;
 
 pub use sidecar::{AxlSidecar, AxlSidecarState, SidecarError};
 
@@ -51,6 +53,7 @@ pub fn run() {
         .manage(MessagingState::default())
         .manage(IdentitySessionState::default())
         .manage(ChatState::default())
+        .manage(ChatStoreState::default())
         .manage(AgentState::default())
         .manage(A2aServiceState::default())
         .setup(|app| {
@@ -62,6 +65,11 @@ pub fn run() {
             if let Some(agent_state) = app.try_state::<AgentState>() {
                 if let Err(e) = agent_state.initialize(app.handle()) {
                     tracing::warn!(target: "anton::agent", "agent storage not started: {e}");
+                }
+            }
+            if let Some(chat_store) = app.try_state::<ChatStoreState>() {
+                if let Err(e) = chat_store.initialize(app.handle()) {
+                    tracing::warn!(target: "anton::chat", "chat storage not started: {e}");
                 }
             }
             let (rpc, ens_config) = anton_core::ens::ens_rpc_and_resolver_config();
@@ -104,6 +112,7 @@ pub fn run() {
             chat::chat_close,
             chat::chat_send,
             chat::chat_history,
+            chat_store::chat_list_conversations,
             agent::agent_get_settings,
             agent::agent_update_settings,
             agent::agent_get_conversation_mode,

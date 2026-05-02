@@ -2,13 +2,15 @@
 
 use anton_core::ens::{normalize_chat_name, ResolvedIdentity};
 use anton_core::messaging::{
-    ingest_verified_inbound, MessageDispatcher, MessagingEvent, ResolvedIdentityWire, WireEnvelope,
-    Conversations,
+    ingest_verified_inbound, Conversations, MessageDispatcher, MessagingEvent,
+    ResolvedIdentityWire, WireEnvelope,
 };
 use anton_core::transport::PeerId;
 use anton_core::AntonError;
 use parking_lot::Mutex;
 use tauri::{AppHandle, Emitter, State};
+
+use crate::chat_store::ChatStoreState;
 
 pub struct MessagingInner {
     pub conversations: Conversations,
@@ -35,6 +37,7 @@ impl Default for MessagingState {
 pub fn messaging_ingest_verified_inbound(
     app: AppHandle,
     state: State<'_, MessagingState>,
+    chat_store: State<'_, ChatStoreState>,
     transport_peer_hex: String,
     resolved: ResolvedIdentityWire,
     envelope: WireEnvelope,
@@ -52,6 +55,9 @@ pub fn messaging_ingest_verified_inbound(
 
     for ev in events {
         let MessagingEvent::ChatMessageReceived { peer, message } = ev;
+        chat_store
+            .save_message(&peer, &message, Some(envelope.nonce))
+            .map_err(|e| e.to_string())?;
         let payload = serde_json::json!({ "peer": peer, "message": message });
         app.emit("chat:message-received", payload)
             .map_err(|e| e.to_string())?;

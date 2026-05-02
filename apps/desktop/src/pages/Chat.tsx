@@ -33,6 +33,19 @@ function toReply(message: ChatMessage): ChatReply {
   };
 }
 
+function friendlyResolveError(name: string, raw: string): string {
+  const lower = raw.toLowerCase();
+  if (
+    lower.includes("missing") ||
+    lower.includes("not found") ||
+    lower.includes("no resolver") ||
+    lower.includes("ens")
+  ) {
+    return `Could not find ${name}. Check the subname spelling or register it first.`;
+  }
+  return "Could not resolve this name right now. Check the subname and try again.";
+}
+
 export function ChatPage() {
   const { ens: routeEns } = useParams<{ ens: string }>();
   const navigate = useNavigate();
@@ -55,7 +68,7 @@ export function ChatPage() {
   const [agentStatus, setAgentStatus] = useState<string | null>(null);
   const [a2aBusy, setA2aBusy] = useState<A2aTool | null>(null);
   const [a2aStatus, setA2aStatus] = useState<string | null>(null);
-  const messageEndRef = useRef<HTMLDivElement | null>(null);
+  const messageListRef = useRef<HTMLDivElement | null>(null);
 
   const activeNorm = useMemo(
     () => (activeEns ? activeEns.trim().toLowerCase() : null),
@@ -65,6 +78,17 @@ export function ChatPage() {
   const refreshMessages = useCallback(async (ensKey: string) => {
     const list = await ipc("chat_history", { ens: ensKey });
     setMessages(list);
+  }, []);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const peers = await ipc("chat_list_conversations");
+        setSessions(peers.map((p) => p.toLowerCase()));
+      } catch {
+        // Chat storage is best-effort; normal resolve/open still works.
+      }
+    })();
   }, []);
 
   useEffect(() => {
@@ -97,7 +121,11 @@ export function ChatPage() {
   }, [activeNorm, refreshMessages]);
 
   useEffect(() => {
-    messageEndRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
+    const el = messageListRef.current;
+    if (!el) return;
+    window.requestAnimationFrame(() => {
+      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    });
   }, [messages, activeNorm]);
 
   useEffect(() => {
@@ -158,7 +186,7 @@ export function ChatPage() {
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.warn("[Chat] ens_resolve failed", name, msg);
-      setResolveError(msg);
+      setResolveError(friendlyResolveError(name, msg));
     } finally {
       setResolving(false);
     }
@@ -308,8 +336,8 @@ export function ChatPage() {
   };
 
   return (
-    <div className="grid h-full grid-cols-[18rem_1fr]">
-      <aside className="flex flex-col border-r border-slate-800 bg-slate-950/40">
+    <div className="grid h-full min-h-0 grid-cols-[18rem_1fr]">
+      <aside className="flex min-h-0 flex-col border-r border-slate-800 bg-slate-950/40">
         <div className="border-b border-slate-800 p-3">
           <p className="mb-2 text-xs font-medium text-slate-400">New conversation</p>
           <div className="flex gap-1">
@@ -347,7 +375,7 @@ export function ChatPage() {
           ) : null}
         </div>
         <div className="flex-1 overflow-auto px-2 py-2">
-          <p className="px-1 pb-2 text-[10px] uppercase tracking-wide text-slate-500">This session</p>
+          <p className="px-1 pb-2 text-[10px] uppercase tracking-wide text-slate-500">Conversations</p>
           {sessions.length === 0 ? (
             <p className="px-2 text-xs text-slate-500">No open conversations.</p>
           ) : (
@@ -380,7 +408,7 @@ export function ChatPage() {
           )}
         </div>
       </aside>
-      <section className="flex min-w-0 flex-col">
+      <section className="flex min-h-0 min-w-0 flex-col">
         <header className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
           <div className="flex min-w-0 flex-col gap-1">
             <span className="truncate font-mono text-sm text-slate-200">
@@ -424,7 +452,7 @@ export function ChatPage() {
           </div>
         </header>
         <div className="flex flex-1 flex-col overflow-hidden">
-          <div className="flex-1 space-y-2 overflow-y-auto px-4 py-3">
+          <div ref={messageListRef} className="min-h-0 flex-1 space-y-2 overflow-y-auto px-4 py-3">
             {messages.map((m) => (
               <div
                 key={m.id}
@@ -436,6 +464,11 @@ export function ChatPage() {
                 <p className="text-xs text-slate-500">
                   {m.state} · {new Date(Number(m.ts)).toLocaleString()}
                 </p>
+                {m.agentGenerated ? (
+                  <span className="mt-1 inline-flex rounded-full bg-violet-500/15 px-2 py-0.5 text-[10px] font-medium text-violet-300">
+                    Agent
+                  </span>
+                ) : null}
                 {m.replyTo ? (
                   <div className="mt-2 rounded border-l-2 border-emerald-400/60 bg-black/20 px-2 py-1 text-xs text-slate-300">
                     <p className="font-mono text-[10px] text-slate-500">Reply to {m.replyTo.from}</p>
@@ -452,7 +485,6 @@ export function ChatPage() {
                 </button>
               </div>
             ))}
-            <div ref={messageEndRef} />
           </div>
         </div>
         <footer className="border-t border-slate-800 p-3">

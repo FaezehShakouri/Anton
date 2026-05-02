@@ -7,6 +7,7 @@ use anton_core::messaging::{ingest_verified_inbound, MessagingEvent, WireEnvelop
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::agent;
+use crate::chat_store::ChatStoreState;
 use crate::messaging::{MessagingInner, MessagingState};
 use crate::sidecar::AxlSidecarState;
 
@@ -50,9 +51,24 @@ pub async fn run(app: AppHandle, resolver: Arc<dyn IdentityResolver>) {
         let Some(messaging_state) = app.try_state::<MessagingState>() else {
             continue;
         };
+        let chat_store = app.try_state::<ChatStoreState>();
 
         let events = {
             let mut g = messaging_state.inner.lock();
+            if let Some(store) = chat_store.as_ref() {
+                let peer = anton_core::ens::normalize_chat_name(envelope.from.trim());
+                if let Ok(max_nonce) = store.max_received_nonce(&peer) {
+                    let last = g
+                        .conversations
+                        .last_nonce_from
+                        .get(&peer)
+                        .copied()
+                        .unwrap_or(0);
+                    if max_nonce > last {
+                        g.conversations.last_nonce_from.insert(peer, max_nonce);
+                    }
+                }
+            }
             let MessagingInner {
                 conversations,
                 dispatcher,
@@ -74,6 +90,11 @@ pub async fn run(app: AppHandle, resolver: Arc<dyn IdentityResolver>) {
 
         for ev in events {
             let MessagingEvent::ChatMessageReceived { peer, message } = ev;
+            if let Some(store) = chat_store.as_ref() {
+                if let Err(e) = store.save_message(&peer, &message, Some(envelope.nonce)) {
+                    tracing::warn!(target: "anton::recv", "persist message: {e}");
+                }
+            }
             let payload = serde_json::json!({ "peer": peer.clone(), "message": message.clone() });
             let _ = app.emit("chat:message-received", payload);
             agent::maybe_auto_reply(app.clone(), peer, message);

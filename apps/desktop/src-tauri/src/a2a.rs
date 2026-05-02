@@ -379,11 +379,14 @@ pub async fn agent_a2a_call_tool(
 
 fn local_ens_name<R: Runtime>(app: &AppHandle<R>) -> Result<String, String> {
     let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let settings = Settings::load_or_default(&Settings::default_path(&dir)).map_err(|e| e.to_string())?;
+    let settings =
+        Settings::load_or_default(&Settings::default_path(&dir)).map_err(|e| e.to_string())?;
     settings
         .last_username
         .map(|name| normalize_chat_name(&name))
-        .ok_or_else(|| "Register or save your ENS name before calling remote A2A tools.".to_string())
+        .ok_or_else(|| {
+            "Register or save your ENS name before calling remote A2A tools.".to_string()
+        })
 }
 
 fn with_remote_conversation_peer(arguments: Value, local_ens: &str) -> Result<Value, String> {
@@ -419,9 +422,15 @@ mod tests {
 
     #[test]
     fn remote_tool_arguments_use_local_ens_as_peer() {
-        let args = with_remote_conversation_peer(json!({ "peer": "wrong.anton.eth", "text": "hello" }), "me.anton.eth")
-            .unwrap();
-        assert_eq!(args.get("peer").and_then(Value::as_str), Some("me.anton.eth"));
+        let args = with_remote_conversation_peer(
+            json!({ "peer": "wrong.anton.eth", "text": "hello" }),
+            "me.anton.eth",
+        )
+        .unwrap();
+        assert_eq!(
+            args.get("peer").and_then(Value::as_str),
+            Some("me.anton.eth")
+        );
         assert_eq!(args.get("text").and_then(Value::as_str), Some("hello"));
     }
 }

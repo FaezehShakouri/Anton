@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 
 use crate::chat::{self, ChatState, ResolverState};
+use crate::chat_store::ChatStoreState;
 use crate::messaging::MessagingState;
 use crate::session::IdentitySessionState;
 use crate::sidecar::AxlSidecarState;
@@ -516,12 +517,16 @@ pub async fn send_reply_for_peer<R: Runtime>(
     let sidecar = app
         .try_state::<AxlSidecarState>()
         .ok_or_else(|| "AXL sidecar state is not available.".to_string())?;
+    let chat_store = app
+        .try_state::<ChatStoreState>()
+        .ok_or_else(|| "Chat storage state is not available.".to_string())?;
     let sent = chat::send_chat_message(
         app,
         &chat_state,
         &resolver,
         &session,
         &messaging,
+        &chat_store,
         &sidecar,
         peer.clone(),
         reply,
@@ -673,12 +678,16 @@ async fn auto_reply<R: Runtime>(
         let sidecar = app
             .try_state::<AxlSidecarState>()
             .ok_or_else(|| "AXL sidecar state is not available.".to_string())?;
+        let chat_store = app
+            .try_state::<ChatStoreState>()
+            .ok_or_else(|| "Chat storage state is not available.".to_string())?;
         let sent = chat::send_chat_message(
             &app,
             &chat_state,
             &resolver,
             &session,
             &messaging,
+            &chat_store,
             &sidecar,
             peer.clone(),
             reply.trim().to_string(),
