@@ -833,7 +833,7 @@ export function ChatPage() {
                   </svg>
                 </button>
                 <span className={cn("text-[10px] font-medium", agentEnabled ? "text-emerald-200" : "text-slate-500")}>
-                  Agent mode
+                  Son of Anton
                 </span>
               </div>
             </div>
