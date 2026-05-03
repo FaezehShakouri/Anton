@@ -7,8 +7,8 @@
 use serde::Serialize;
 use tauri::{AppHandle, Manager, Runtime, State};
 
-use anton_core::settings::Settings;
 use crate::sidecar::AxlSidecarState;
+use anton_core::settings::Settings;
 
 #[tauri::command]
 pub fn ping() -> &'static str {

@@ -113,6 +113,7 @@ pub fn run() {
             chat::chat_close,
             chat::chat_send,
             chat::chat_history,
+            chat::chat_clear,
             chat_store::chat_list_conversations,
             agent::agent_get_settings,
             agent::agent_update_settings,

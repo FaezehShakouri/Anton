@@ -443,13 +443,7 @@ pub async fn draft_reply_for_peer<R: Runtime>(
         .try_state::<AgentState>()
         .ok_or_else(|| "Agent state is not available.".to_string())?;
     let settings = agent_state.settings()?;
-    let messaging = app
-        .try_state::<MessagingState>()
-        .ok_or_else(|| "Messaging state is not available.".to_string())?;
-    let recent = {
-        let g = messaging.inner.lock();
-        g.conversations.messages_for_peer(&peer).to_vec()
-    };
+    let recent = recent_messages_for_peer(app, &peer)?;
     let prompt = build_provider_messages(&settings, &recent);
     let text = complete_chat(&settings, prompt).await?;
     Ok(AgentDraftResponse {
@@ -467,9 +461,6 @@ pub async fn send_reply_for_peer<R: Runtime>(
     let agent_state = app
         .try_state::<AgentState>()
         .ok_or_else(|| "Agent state is not available.".to_string())?;
-    if !agent_state.conversation_enabled(&peer)? {
-        return Err("Enable agent mode for this conversation before A2A can send replies.".into());
-    }
     let settings = agent_state.settings()?;
     match agent_state.record_rate_limited_send(&peer, settings.max_replies_per_hour) {
         Ok(()) => {}
@@ -548,13 +539,7 @@ pub async fn summarize_conversation_for_peer<R: Runtime>(
         .try_state::<AgentState>()
         .ok_or_else(|| "Agent state is not available.".to_string())?;
     let settings = agent_state.settings()?;
-    let messaging = app
-        .try_state::<MessagingState>()
-        .ok_or_else(|| "Messaging state is not available.".to_string())?;
-    let recent = {
-        let g = messaging.inner.lock();
-        g.conversations.messages_for_peer(&peer).to_vec()
-    };
+    let recent = recent_messages_for_peer(app, &peer)?;
     if recent.is_empty() {
         return Ok(AgentSummaryResponse {
             peer,
@@ -630,10 +615,7 @@ async fn auto_reply<R: Runtime>(
         let messaging = app
             .try_state::<MessagingState>()
             .ok_or_else(|| "Messaging state is not available.".to_string())?;
-        let recent = {
-            let g = messaging.inner.lock();
-            g.conversations.messages_for_peer(&peer).to_vec()
-        };
+        let recent = recent_messages_for_peer(&app, &peer)?;
         let is_agent_to_agent = message.agent_generated;
         if is_agent_to_agent {
             match agent_state.record_rate_limited_send(&peer, settings.max_replies_per_hour) {
@@ -703,6 +685,25 @@ async fn auto_reply<R: Runtime>(
 
     agent_state.leave_in_flight(&peer);
     result
+}
+
+fn recent_messages_for_peer<R: Runtime>(
+    app: &AppHandle<R>,
+    peer: &str,
+) -> Result<Vec<ChatMessage>, String> {
+    let peer = normalize_chat_name(peer);
+    if let Some(chat_store) = app.try_state::<ChatStoreState>() {
+        let stored = chat_store.messages_for_peer(&peer)?;
+        if !stored.is_empty() {
+            return Ok(stored);
+        }
+    }
+
+    let messaging = app
+        .try_state::<MessagingState>()
+        .ok_or_else(|| "Messaging state is not available.".to_string())?;
+    let g = messaging.inner.lock();
+    Ok(g.conversations.messages_for_peer(&peer).to_vec())
 }
 
 fn migrate(conn: &Connection) -> rusqlite::Result<()> {
@@ -938,6 +939,13 @@ fn build_provider_messages(
     recent: &[ChatMessage],
 ) -> Vec<ProviderMessage> {
     let mut out = vec![ProviderMessage::system(settings.system_prompt.clone())];
+    if recent.is_empty() {
+        out.push(ProviderMessage::user(
+            "No prior chat messages are available yet. Draft a short, friendly response that asks how you can help."
+                .to_string(),
+        ));
+        return out;
+    }
     for msg in recent
         .iter()
         .rev()

@@ -25,6 +25,24 @@ type AgentStatus = {
 
 type A2aTool = "draft_reply" | "send_reply" | "summarize_conversation" | "handoff_to_human";
 
+type A2aCommand =
+  | { kind: "skill"; tool: A2aTool; arguments: Record<string, unknown> }
+  | { kind: "unknown"; command: string };
+
+type A2aCommandOption = {
+  command: string;
+  insertText: string;
+  label: string;
+  description: string;
+};
+
+type LocalSkillMessage = ChatMessage & {
+  timelineKind: "skill_call" | "skill_result";
+  skillTool: A2aTool;
+};
+
+type TimelineMessage = ChatMessage | LocalSkillMessage;
+
 const A2A_SKILLS: ReadonlyArray<{ tool: A2aTool; label: string; description: string; accent: string }> = [
   {
     tool: "draft_reply",
@@ -51,6 +69,34 @@ const A2A_SKILLS: ReadonlyArray<{ tool: A2aTool; label: string; description: str
     accent: "from-rose-300 to-violet-300",
   },
 ];
+
+const A2A_COMMAND_OPTIONS: ReadonlyArray<A2aCommandOption> = [
+  {
+    command: "summarize",
+    insertText: "/summarize",
+    label: "Summarize",
+    description: "Run summarize_conversation for this chat.",
+  },
+  {
+    command: "draft",
+    insertText: "/draft",
+    label: "Draft",
+    description: "Ask the remote agent for a draft reply.",
+  },
+  {
+    command: "send",
+    insertText: "/send ",
+    label: "Send reply",
+    description: "Ask the remote agent to send a signed reply.",
+  },
+  {
+    command: "handoff",
+    insertText: "/handoff",
+    label: "Handoff",
+    description: "Ask the remote agent to wait for the human.",
+  },
+];
+
 
 function toReply(message: ChatMessage): ChatReply {
   return {
@@ -81,6 +127,56 @@ function shortEns(name: string): string {
   return name.replace(/\.anton\.eth$/i, "");
 }
 
+function isLocalSkillMessage(message: TimelineMessage): message is LocalSkillMessage {
+  return "timelineKind" in message;
+}
+
+function skillLabel(tool: A2aTool): string {
+  return A2A_SKILLS.find((skill) => skill.tool === tool)?.label ?? tool;
+}
+
+function commandTextForTool(tool: A2aTool, args: Record<string, unknown>): string {
+  if (tool === "summarize_conversation") return "/summarize";
+  if (tool === "draft_reply") return "/draft";
+  if (tool === "send_reply") {
+    const text = typeof args.text === "string" ? args.text.trim() : "";
+    return text ? `/send ${text}` : "/send";
+  }
+  if (tool === "handoff_to_human") {
+    const reason = typeof args.reason === "string" ? args.reason.trim() : "";
+    return reason && reason !== "A2A handoff requested from Anton UI." ? `/handoff ${reason}` : "/handoff";
+  }
+  return `/${tool}`;
+}
+
+function parseA2aCommand(text: string): A2aCommand | null {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith("/")) return null;
+
+  const [rawCommand = "", ...rest] = trimmed.slice(1).split(/\s+/);
+  const command = rawCommand.toLowerCase();
+  const remainder = rest.join(" ").trim();
+
+  if (command === "summarize" || command === "summary" || command === "summerize") {
+    return { kind: "skill", tool: "summarize_conversation", arguments: {} };
+  }
+  if (command === "draft") {
+    return { kind: "skill", tool: "draft_reply", arguments: {} };
+  }
+  if (command === "send") {
+    return { kind: "skill", tool: "send_reply", arguments: remainder ? { text: remainder } : {} };
+  }
+  if (command === "handoff") {
+    return {
+      kind: "skill",
+      tool: "handoff_to_human",
+      arguments: { reason: remainder || "A2A handoff requested from Anton UI." },
+    };
+  }
+
+  return { kind: "unknown", command: rawCommand || "unknown" };
+}
+
 export function ChatPage() {
   const { ens: routeEns } = useParams<{ ens: string }>();
   const navigate = useNavigate();
@@ -95,9 +191,12 @@ export function ChatPage() {
   const [sessions, setSessions] = useState<string[]>([]);
   const [activeEns, setActiveEns] = useState<string | null>(routeEns ?? null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [localSkillMessages, setLocalSkillMessages] = useState<Record<string, LocalSkillMessage[]>>({});
   const [draft, setDraft] = useState("");
   const [replyTo, setReplyTo] = useState<ChatReply | null>(null);
   const [sendBusy, setSendBusy] = useState(false);
+  const [clearBusy, setClearBusy] = useState(false);
+  const [clearConfirming, setClearConfirming] = useState(false);
   const [agentEnabled, setAgentEnabled] = useState(false);
   const [agentBusy, setAgentBusy] = useState(false);
   const [agentStatus, setAgentStatus] = useState<string | null>(null);
@@ -105,15 +204,49 @@ export function ChatPage() {
   const [a2aStatus, setA2aStatus] = useState<string | null>(null);
   const [displayedA2aStatus, setDisplayedA2aStatus] = useState("");
   const messageListRef = useRef<HTMLDivElement | null>(null);
+  const draftInputRef = useRef<HTMLTextAreaElement | null>(null);
 
   const activeNorm = useMemo(
     () => (activeEns ? activeEns.trim().toLowerCase() : null),
     [activeEns],
   );
 
+  const commandQuery = useMemo(() => {
+    const trimmedStart = draft.trimStart();
+    if (!trimmedStart.startsWith("/")) return null;
+    const token = trimmedStart.slice(1).split(/\s+/)[0] ?? "";
+    return trimmedStart.includes(" ") ? null : token.toLowerCase();
+  }, [draft]);
+
+  const commandOptions = useMemo(() => {
+    if (commandQuery === null) return [];
+    return A2A_COMMAND_OPTIONS.filter(
+      (option) =>
+        option.command.includes(commandQuery) ||
+        option.label.toLowerCase().includes(commandQuery),
+    );
+  }, [commandQuery]);
+
+  const activeSkillMessages = useMemo(
+    () => (activeNorm ? (localSkillMessages[activeNorm] ?? []) : []),
+    [activeNorm, localSkillMessages],
+  );
+
+  const timelineMessages = useMemo<TimelineMessage[]>(
+    () => [...messages, ...activeSkillMessages].sort((a, b) => a.ts - b.ts),
+    [activeSkillMessages, messages],
+  );
+
   const refreshMessages = useCallback(async (ensKey: string) => {
     const list = await ipc("chat_history", { ens: ensKey });
     setMessages(list);
+  }, []);
+
+  const addLocalSkillMessage = useCallback((peer: string, message: LocalSkillMessage) => {
+    setLocalSkillMessages((previous) => ({
+      ...previous,
+      [peer]: [...(previous[peer] ?? []), message],
+    }));
   }, []);
 
   useEffect(() => {
@@ -176,6 +309,7 @@ export function ChatPage() {
       setAgentEnabled(false);
       setAgentStatus(null);
       setA2aStatus(null);
+      setClearConfirming(false);
       return;
     }
     void (async () => {
@@ -188,13 +322,20 @@ export function ChatPage() {
         setMessages([]);
       }
     })();
+    setClearConfirming(false);
   }, [activeNorm, refreshMessages]);
+
+  useEffect(() => {
+    if (!clearConfirming) return;
+    const id = window.setTimeout(() => setClearConfirming(false), 3_000);
+    return () => window.clearTimeout(id);
+  }, [clearConfirming]);
 
   useLayoutEffect(() => {
     const el = messageListRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-  }, [messages, activeNorm]);
+  }, [timelineMessages, activeNorm]);
 
   useEffect(() => {
     const unlisten = listen<{ peer: string; message: ChatMessage }>("chat:message-received", (ev) => {
@@ -285,13 +426,56 @@ export function ChatPage() {
     }
   };
 
+  const clearConversation = async () => {
+    if (!activeNorm) return;
+    if (!clearConfirming) {
+      setClearConfirming(true);
+      return;
+    }
+    setClearBusy(true);
+    setResolveError(null);
+    try {
+      const peer = activeNorm;
+      await ipc("chat_clear", { ens: peer });
+      setMessages([]);
+      setReplyTo(null);
+      setA2aStatus(null);
+      setLocalSkillMessages((previous) => {
+        const next = { ...previous };
+        delete next[peer];
+        return next;
+      });
+      setClearConfirming(false);
+    } catch (e) {
+      setResolveError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setClearBusy(false);
+    }
+  };
+
   const handleSend = async () => {
-    if (!activeNorm || !draft.trim()) return;
+    const text = draft.trim();
+    if (!activeNorm || !text) return;
+    const command = parseA2aCommand(text);
     setSendBusy(true);
     try {
+      if (command?.kind === "unknown") {
+        setResolveError(`Unknown skill command /${command.command}. Try /summarize, /draft, /send, or /handoff.`);
+        return;
+      }
+      if (command?.kind === "skill") {
+        setResolveError(null);
+        setDraft("");
+        setReplyTo(null);
+        await callA2aTool(command.tool, command.arguments, {
+          commandText: text,
+          replyTo,
+        });
+        return;
+      }
       await ipc("chat_send", {
         to: activeNorm,
-        text: draft.trim(),
+        text,
         ...(replyTo ? { replyTo } : {}),
       });
       setDraft("");
@@ -363,8 +547,27 @@ export function ChatPage() {
     return typeof result === "string" ? result : JSON.stringify(result);
   };
 
-  const callA2aTool = async (tool: A2aTool, extra: Record<string, unknown> = {}) => {
+  const callA2aTool = async (
+    tool: A2aTool,
+    extra: Record<string, unknown> = {},
+    options: { commandText?: string; replyTo?: ChatReply | null } = {},
+  ) => {
     if (!activeNorm) return;
+    const peer = activeNorm;
+    const caller = currentUserEns ?? "you";
+    const callId = `skill-call-${tool}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const callMessage: LocalSkillMessage = {
+      id: callId,
+      from: caller,
+      to: peer,
+      text: options.commandText ?? commandTextForTool(tool, extra),
+      ts: Date.now(),
+      state: "sent",
+      ...(options.replyTo ? { replyTo: options.replyTo } : {}),
+      timelineKind: "skill_call",
+      skillTool: tool,
+    };
+    addLocalSkillMessage(peer, callMessage);
     setA2aBusy(tool);
     setA2aStatus(null);
     try {
@@ -375,18 +578,44 @@ export function ChatPage() {
           arguments: extra,
         },
       });
-      setA2aStatus(formatA2aResponse(tool, res.response));
+      const formatted = formatA2aResponse(tool, res.response);
+      setA2aStatus(formatted);
+      addLocalSkillMessage(peer, {
+        id: `${callId}-result`,
+        from: peer,
+        to: caller,
+        text: formatted,
+        ts: Date.now(),
+        state: "received",
+        replyTo: toReply(callMessage),
+        agentGenerated: true,
+        timelineKind: "skill_result",
+        skillTool: tool,
+      });
       if (tool === "send_reply") {
-        await refreshMessages(activeNorm);
+        await refreshMessages(peer);
         window.setTimeout(() => {
-          void refreshMessages(activeNorm);
+          void refreshMessages(peer);
         }, 1_500);
         window.setTimeout(() => {
-          void refreshMessages(activeNorm);
+          void refreshMessages(peer);
         }, 4_000);
       }
     } catch (e) {
-      setA2aStatus(e instanceof Error ? e.message : String(e));
+      const message = e instanceof Error ? e.message : String(e);
+      setA2aStatus(message);
+      addLocalSkillMessage(peer, {
+        id: `${callId}-error`,
+        from: peer,
+        to: caller,
+        text: message,
+        ts: Date.now(),
+        state: "failed",
+        replyTo: toReply(callMessage),
+        agentGenerated: true,
+        timelineKind: "skill_result",
+        skillTool: tool,
+      });
     } finally {
       setA2aBusy(null);
     }
@@ -569,36 +798,51 @@ export function ChatPage() {
                 </div>
               </div>
             </div>
-            <div className="flex shrink-0 flex-col items-center gap-1">
+            <div className="flex shrink-0 items-center gap-3">
               <button
                 type="button"
-                disabled={!activeNorm || agentBusy}
-                onClick={() => void toggleAgent()}
-                title={agentEnabled ? "Personal agent online" : "Personal agent off"}
-                aria-pressed={agentEnabled}
-                aria-label={agentEnabled ? "Turn personal agent off" : "Turn personal agent on"}
+                disabled={!activeNorm || clearBusy || timelineMessages.length === 0}
+                onClick={() => void clearConversation()}
                 className={cn(
-                  "grid size-10 place-items-center rounded-2xl border transition disabled:opacity-40",
-                  agentEnabled
-                    ? "border-emerald-300/20 bg-emerald-300/10 text-emerald-200 shadow-[0_0_22px_rgba(52,211,153,0.12)]"
-                    : "border-white/10 bg-white/[0.04] text-slate-500 hover:bg-white/[0.08] hover:text-slate-200",
+                  "rounded-2xl border px-3 py-2 text-xs font-medium transition disabled:opacity-40",
+                  clearConfirming
+                    ? "border-red-300/25 bg-red-500/10 text-red-100"
+                    : "border-white/10 bg-white/[0.04] text-slate-400 hover:bg-red-500/10 hover:text-red-200",
                 )}
               >
-                <svg viewBox="0 0 24 24" aria-hidden className="size-5" fill="none" stroke="currentColor" strokeWidth="1.8">
-                  <path d="M12 3v8" strokeLinecap="round" />
-                  <path d="M7.1 6.5a7 7 0 1 0 9.8 0" strokeLinecap="round" />
-                </svg>
+                {clearBusy ? "Clearing..." : clearConfirming ? "Confirm clear" : "Clear"}
               </button>
-              <span className={cn("text-[10px] font-medium", agentEnabled ? "text-emerald-200" : "text-slate-500")}>
-                Agent mode
-              </span>
+              <div className="flex flex-col items-center gap-1">
+                <button
+                  type="button"
+                  disabled={!activeNorm || agentBusy}
+                  onClick={() => void toggleAgent()}
+                  title={agentEnabled ? "Personal agent online" : "Personal agent off"}
+                  aria-pressed={agentEnabled}
+                  aria-label={agentEnabled ? "Turn personal agent off" : "Turn personal agent on"}
+                  className={cn(
+                    "grid size-10 place-items-center rounded-2xl border transition disabled:opacity-40",
+                    agentEnabled
+                      ? "border-emerald-300/20 bg-emerald-300/10 text-emerald-200 shadow-[0_0_22px_rgba(52,211,153,0.12)]"
+                      : "border-white/10 bg-white/[0.04] text-slate-500 hover:bg-white/[0.08] hover:text-slate-200",
+                  )}
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden className="size-5" fill="none" stroke="currentColor" strokeWidth="1.8">
+                    <path d="M12 3v8" strokeLinecap="round" />
+                    <path d="M7.1 6.5a7 7 0 1 0 9.8 0" strokeLinecap="round" />
+                  </svg>
+                </button>
+                <span className={cn("text-[10px] font-medium", agentEnabled ? "text-emerald-200" : "text-slate-500")}>
+                  Agent mode
+                </span>
+              </div>
             </div>
           </header>
 
           <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
             <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_48%_12%,rgba(16,185,129,0.08),transparent_28%)]" />
             <div ref={messageListRef} className="relative min-h-0 flex-1 overflow-y-auto px-6 py-6">
-              {messages.length === 0 ? (
+              {timelineMessages.length === 0 ? (
                 <div className="mx-auto mt-16 max-w-md rounded-[2rem] border border-white/10 bg-white/[0.04] p-8 text-center shadow-2xl shadow-black/20">
                   <div className="mx-auto grid size-14 place-items-center rounded-3xl bg-gradient-to-br from-emerald-300 to-violet-300 font-black text-slate-950">
                     AI
@@ -610,8 +854,9 @@ export function ChatPage() {
                 </div>
               ) : (
                 <div className="space-y-5">
-                  {messages.map((m) => {
+                  {timelineMessages.map((m) => {
                     const incoming = m.from.toLowerCase() === activeNorm;
+                    const skillMessage = isLocalSkillMessage(m) ? m : null;
                     return (
                       <div
                         key={m.id}
@@ -644,15 +889,27 @@ export function ChatPage() {
                                 <p className="mt-0.5 line-clamp-2 whitespace-pre-wrap">{m.replyTo.text}</p>
                               </div>
                             ) : null}
-                            <p className="whitespace-pre-wrap">{m.text}</p>
+                            <p className={cn("whitespace-pre-wrap", skillMessage?.timelineKind === "skill_call" ? "font-semibold" : null)}>
+                              {m.text}
+                            </p>
                             <div className="mt-2 flex items-center justify-between gap-3 text-[10px] font-medium uppercase tracking-[0.12em] text-white/55">
-                              {m.agentGenerated ? (
-                                <span className="rounded-full border border-emerald-300/20 bg-emerald-300/10 px-2 py-0.5 text-emerald-200">
-                                  Agent
-                                </span>
-                              ) : (
-                                <span />
-                              )}
+                              <div className="flex min-w-0 items-center gap-1.5">
+                                {skillMessage?.timelineKind === "skill_call" ? (
+                                  <span className="rounded-full border border-emerald-300/20 bg-emerald-300/10 px-2 py-0.5 text-emerald-200">
+                                    Skill call
+                                  </span>
+                                ) : null}
+                                {skillMessage?.timelineKind === "skill_result" ? (
+                                  <span className="rounded-full border border-cyan-300/20 bg-cyan-300/10 px-2 py-0.5 text-cyan-100">
+                                    {skillLabel(skillMessage.skillTool)}
+                                  </span>
+                                ) : null}
+                                {m.agentGenerated ? (
+                                  <span className="rounded-full border border-emerald-300/20 bg-emerald-300/10 px-2 py-0.5 text-emerald-200">
+                                    Agent
+                                  </span>
+                                ) : null}
+                              </div>
                               <div className="flex items-center justify-end gap-2">
                                 <span>{m.state}</span>
                                 <span>
@@ -697,8 +954,43 @@ export function ChatPage() {
               </div>
             ) : null}
 
+            {commandQuery !== null ? (
+              <div className="mb-3 overflow-hidden rounded-3xl border border-white/10 bg-[#11141d]/95 p-2 shadow-2xl shadow-black/25 backdrop-blur-xl">
+                <div className="px-3 pb-2 pt-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-500">
+                  A2A skills
+                </div>
+                {commandOptions.length > 0 ? (
+                  <div className="space-y-1">
+                    {commandOptions.map((option) => (
+                      <button
+                        key={option.command}
+                        type="button"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => {
+                          setDraft(option.insertText);
+                          window.requestAnimationFrame(() => draftInputRef.current?.focus());
+                        }}
+                        className="flex w-full items-center gap-3 rounded-2xl px-3 py-2 text-left transition hover:bg-white/[0.06]"
+                      >
+                        <span className="rounded-xl border border-emerald-300/20 bg-emerald-300/10 px-2.5 py-1 font-mono text-xs font-semibold text-emerald-200">
+                          /{option.command}
+                        </span>
+                        <span className="min-w-0">
+                          <span className="block text-sm font-medium text-slate-100">{option.label}</span>
+                          <span className="block truncate text-xs text-slate-500">{option.description}</span>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="px-3 pb-2 text-xs text-slate-500">No skill matches this command.</p>
+                )}
+              </div>
+            ) : null}
+
             <div className="flex items-end gap-3 rounded-[1.75rem] border border-white/10 bg-white/[0.05] p-2 shadow-2xl shadow-black/20">
               <textarea
+                ref={draftInputRef}
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 onKeyDown={(e) => {

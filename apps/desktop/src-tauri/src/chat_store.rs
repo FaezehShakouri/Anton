@@ -71,6 +71,16 @@ impl ChatStoreState {
         messages_for_peer(&conn, peer).map_err(|e| e.to_string())
     }
 
+    pub fn clear_peer(&self, peer: &str) -> Result<(), String> {
+        let conn = self.conn()?;
+        conn.execute(
+            "DELETE FROM chat_messages WHERE peer = ?1",
+            params![normalize_chat_name(peer)],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     pub fn conversation_peers(&self) -> Result<Vec<String>, String> {
         let conn = self.conn()?;
         let mut stmt = conn

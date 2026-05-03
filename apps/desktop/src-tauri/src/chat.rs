@@ -102,7 +102,9 @@ fn settings_path<R: Runtime>(app: &AppHandle<R>) -> Result<std::path::PathBuf, S
 pub fn chat_current_user<R: Runtime>(app: AppHandle<R>) -> Result<CurrentUserResponse, String> {
     let settings = Settings::load_or_default(&settings_path(&app)?).map_err(|e| e.to_string())?;
     Ok(CurrentUserResponse {
-        ens: settings.last_username.map(|name| normalize_chat_name(&name)),
+        ens: settings
+            .last_username
+            .map(|name| normalize_chat_name(&name)),
     })
 }
 
@@ -185,6 +187,20 @@ pub fn chat_history(
     let mut g = messaging.inner.lock();
     g.conversations.by_peer.insert(key, messages.clone());
     Ok(messages)
+}
+
+#[tauri::command]
+pub fn chat_clear(
+    messaging: State<'_, MessagingState>,
+    chat_store: State<'_, ChatStoreState>,
+    ens: String,
+) -> Result<(), String> {
+    let key = normalize_chat_name(&ens);
+    chat_store.clear_peer(&key)?;
+    let mut g = messaging.inner.lock();
+    g.conversations.clear_peer(&key);
+    g.conversations.last_nonce_from.remove(&key);
+    Ok(())
 }
 
 #[tauri::command]

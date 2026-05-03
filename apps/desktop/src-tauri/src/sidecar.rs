@@ -48,7 +48,10 @@ pub const FALLBACK_BOOTSTRAP_PEERS: &[&str] =
 /// [`anton_core::ens::ens_rpc_and_resolver_config`]), then `settings.json` `bootstrap_peers`,
 /// de-duplicated in order.
 pub async fn merged_bootstrap_peers<R: Runtime>(app: &AppHandle<R>) -> Vec<String> {
-    let mut out: Vec<String> = FALLBACK_BOOTSTRAP_PEERS.iter().map(|s| (*s).to_string()).collect();
+    let mut out: Vec<String> = FALLBACK_BOOTSTRAP_PEERS
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect();
 
     let (rpc, ens_cfg) = anton_core::ens::ens_rpc_and_resolver_config();
     match anton_core::ens::fetch_axl_bootstrap_peers(&rpc, ens_cfg).await {
