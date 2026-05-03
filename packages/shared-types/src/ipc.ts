@@ -1,6 +1,27 @@
 import type { ChatMessage, ChatReply, WireEnvelope } from "./envelope";
 import type { EnsName, Identity, ResolvedIdentityWire } from "./identity";
 
+export type CalendarDraftStatus = "pending" | "accepted" | "rejected" | "countered" | "expired";
+
+export interface CalendarDraft {
+  id: string;
+  peer: EnsName;
+  title: string;
+  description: string;
+  start: string;
+  end: string;
+  timezone: string;
+  location: string;
+  attendees: string[];
+  status: CalendarDraftStatus | string;
+  source: string;
+  requestId: string;
+  available: boolean;
+  message: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
 /**
  * The Tauri IPC surface.
  *
@@ -65,6 +86,7 @@ export interface TauriCommands {
       addrTxHash: string;
       peerIdTxHash: string;
       pubkeyTxHash: string;
+      serviceTxHash: string;
     };
   };
 
@@ -147,6 +169,49 @@ export interface TauriCommands {
       apiKeyConfigured: boolean;
     };
   };
+  agent_get_google_calendar_settings: {
+    args: void;
+    returns: {
+      clientId: string;
+      calendarId: string;
+      clientSecretConfigured: boolean;
+      refreshTokenConfigured: boolean;
+    };
+  };
+  agent_update_google_calendar_settings: {
+    args: {
+      settings: {
+        clientId: string;
+        calendarId: string;
+        clientSecret?: string;
+        refreshToken?: string;
+        clearSecrets?: boolean;
+      };
+    };
+    returns: {
+      clientId: string;
+      calendarId: string;
+      clientSecretConfigured: boolean;
+      refreshTokenConfigured: boolean;
+    };
+  };
+  agent_test_google_calendar: {
+    args: void;
+    returns: { ok: boolean; message: string };
+  };
+  agent_list_calendar_drafts: {
+    args: { peer: EnsName };
+    returns: CalendarDraft[];
+  };
+  agent_update_calendar_draft: {
+    args: {
+      draftId: string;
+      action: "accept" | "reject" | "counter";
+      counterStart?: string;
+      counterEnd?: string;
+    };
+    returns: CalendarDraft;
+  };
   agent_get_conversation_mode: {
     args: { peer: EnsName };
     returns: { peer: EnsName; enabled: boolean; disabledUntil?: number };
@@ -163,7 +228,7 @@ export interface TauriCommands {
     args: {
       request: {
         peer: EnsName;
-        tool: "draft_reply" | "send_reply" | "summarize_conversation" | "handoff_to_human";
+        tool: "draft_reply" | "send_reply" | "summarize_conversation" | "handoff_to_human" | "propose_calendar_event";
         arguments?: Record<string, unknown>;
       };
     };
@@ -176,5 +241,13 @@ export interface TauriCommands {
   settings_set_bootstrap_peers: {
     args: { peers: string[] };
     returns: void;
+  };
+  settings_get_agent_service_name: {
+    args: void;
+    returns: { serviceName: string };
+  };
+  settings_set_agent_service_name: {
+    args: { update: { serviceName: string } };
+    returns: { serviceName: string };
   };
 }

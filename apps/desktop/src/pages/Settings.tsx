@@ -12,6 +12,9 @@ export function SettingsPage() {
   const [bootstrapText, setBootstrapText] = useState("");
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [agentServiceName, setAgentServiceName] = useState("");
+  const [serviceNameMsg, setServiceNameMsg] = useState<string | null>(null);
+  const [serviceNameBusy, setServiceNameBusy] = useState(false);
   const [agentProvider, setAgentProvider] = useState<AgentProvider>("local_open_ai");
   const [agentModel, setAgentModel] = useState("Llama3");
   const [agentBaseUrl, setAgentBaseUrl] = useState("http://localhost:11434/v1");
@@ -23,6 +26,14 @@ export function SettingsPage() {
   const [agentBusy, setAgentBusy] = useState(false);
   const [ensSyncBusy, setEnsSyncBusy] = useState(false);
   const [ensSyncMsg, setEnsSyncMsg] = useState<string | null>(null);
+  const [googleClientId, setGoogleClientId] = useState("");
+  const [googleClientSecret, setGoogleClientSecret] = useState("");
+  const [googleRefreshToken, setGoogleRefreshToken] = useState("");
+  const [googleCalendarId, setGoogleCalendarId] = useState("primary");
+  const [googleSecretConfigured, setGoogleSecretConfigured] = useState(false);
+  const [googleRefreshConfigured, setGoogleRefreshConfigured] = useState(false);
+  const [googleMsg, setGoogleMsg] = useState<string | null>(null);
+  const [googleBusy, setGoogleBusy] = useState(false);
 
   const refreshTopology = useCallback(async () => {
     const t = await ipc("axl_topology");
@@ -33,6 +44,8 @@ export function SettingsPage() {
     void refreshTopology();
     void (async () => {
       try {
+        const service = await ipc("settings_get_agent_service_name");
+        setAgentServiceName(service.serviceName);
         const settings = await ipc("agent_get_settings");
         setAgentProvider(settings.provider);
         setAgentModel(settings.model);
@@ -42,6 +55,17 @@ export function SettingsPage() {
         setAgentKeyConfigured(settings.apiKeyConfigured);
       } catch (e) {
         setAgentMsg(e instanceof Error ? e.message : String(e));
+      }
+    })();
+    void (async () => {
+      try {
+        const settings = await ipc("agent_get_google_calendar_settings");
+        setGoogleClientId(settings.clientId);
+        setGoogleCalendarId(settings.calendarId || "primary");
+        setGoogleSecretConfigured(settings.clientSecretConfigured);
+        setGoogleRefreshConfigured(settings.refreshTokenConfigured);
+      } catch (e) {
+        setGoogleMsg(e instanceof Error ? e.message : String(e));
       }
     })();
     const id = window.setInterval(() => void refreshTopology(), 10_000);
@@ -63,6 +87,22 @@ export function SettingsPage() {
       setSaveMsg(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
+    }
+  };
+
+  const saveAgentServiceName = async () => {
+    setServiceNameBusy(true);
+    setServiceNameMsg(null);
+    try {
+      const res = await ipc("settings_set_agent_service_name", {
+        update: { serviceName: agentServiceName },
+      });
+      setAgentServiceName(res.serviceName);
+      setServiceNameMsg("Saved. Use Sync ENS to publish this service name, then restart/unlock to update the local A2A advertisement.");
+    } catch (e) {
+      setServiceNameMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setServiceNameBusy(false);
     }
   };
 
@@ -108,11 +148,48 @@ export function SettingsPage() {
     setEnsSyncMsg(null);
     try {
       const res = await ipc("update_current_ens_records");
-      setEnsSyncMsg(`Updated ${res.ens}`);
+      setEnsSyncMsg(`Updated ${res.ens} including A2A service name.`);
     } catch (e) {
       setEnsSyncMsg(e instanceof Error ? e.message : String(e));
     } finally {
       setEnsSyncBusy(false);
+    }
+  };
+
+  const saveGoogleCalendar = async () => {
+    setGoogleBusy(true);
+    setGoogleMsg(null);
+    try {
+      const settings = await ipc("agent_update_google_calendar_settings", {
+        settings: {
+          clientId: googleClientId,
+          calendarId: googleCalendarId || "primary",
+          ...(googleClientSecret.trim() ? { clientSecret: googleClientSecret.trim() } : {}),
+          ...(googleRefreshToken.trim() ? { refreshToken: googleRefreshToken.trim() } : {}),
+        },
+      });
+      setGoogleSecretConfigured(settings.clientSecretConfigured);
+      setGoogleRefreshConfigured(settings.refreshTokenConfigured);
+      setGoogleClientSecret("");
+      setGoogleRefreshToken("");
+      setGoogleMsg("Saved Google Calendar settings.");
+    } catch (e) {
+      setGoogleMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setGoogleBusy(false);
+    }
+  };
+
+  const testGoogleCalendar = async () => {
+    setGoogleBusy(true);
+    setGoogleMsg(null);
+    try {
+      const res = await ipc("agent_test_google_calendar");
+      setGoogleMsg(res.ok ? res.message : `Google Calendar failed: ${res.message}`);
+    } catch (e) {
+      setGoogleMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setGoogleBusy(false);
     }
   };
 
@@ -144,6 +221,31 @@ export function SettingsPage() {
           </button>
         </div>
         {ensSyncMsg ? <p className="mt-3 text-xs text-slate-400">{ensSyncMsg}</p> : null}
+      </section>
+
+      <section className="mt-6 p-5">
+        <h2 className="text-sm font-medium text-slate-200">A2A service</h2>
+        <p className="mt-1 text-xs leading-5 text-slate-500">
+          Other AXL nodes use this MCP service name with your peer ID. It is published as the{" "}
+          <code className="font-mono">anton_agent_service</code> ENS text record when you sync ENS.
+        </p>
+        <div className="mt-4 flex gap-2">
+          <input
+            type="text"
+            value={agentServiceName}
+            onChange={(e) => setAgentServiceName(e.target.value)}
+            className="min-w-0 flex-1 rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-emerald-600 focus:outline-none"
+          />
+          <button
+            type="button"
+            disabled={serviceNameBusy}
+            onClick={() => void saveAgentServiceName()}
+            className="rounded-md bg-emerald-500/90 px-3 py-1.5 text-xs font-medium text-emerald-950 disabled:opacity-50"
+          >
+            Save service
+          </button>
+        </div>
+        {serviceNameMsg ? <p className="mt-2 text-xs text-slate-400">{serviceNameMsg}</p> : null}
       </section>
 
       <section className="mt-6 p-5">
@@ -272,6 +374,74 @@ export function SettingsPage() {
           </button>
         </div>
         {agentMsg ? <p className="mt-2 text-xs text-slate-400">{agentMsg}</p> : null}
+      </section>
+
+      <section className="mt-6 p-5">
+        <h2 className="text-sm font-medium text-slate-200">Google Calendar</h2>
+        <p className="mt-1 text-xs leading-5 text-slate-500">
+          Used by calendar proposal skills to check FreeBusy and write events only after you accept a draft.
+          Create an OAuth client in Google Cloud and paste a refresh token with Calendar access.
+        </p>
+        <div className="mt-4 grid gap-3">
+          <label className="block text-xs font-medium text-slate-300">
+            OAuth client ID
+            <input
+              type="text"
+              value={googleClientId}
+              onChange={(e) => setGoogleClientId(e.target.value)}
+              className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-emerald-600 focus:outline-none"
+            />
+          </label>
+          <label className="block text-xs font-medium text-slate-300">
+            OAuth client secret {googleSecretConfigured ? <span className="text-slate-500">(saved)</span> : null}
+            <input
+              type="password"
+              value={googleClientSecret}
+              onChange={(e) => setGoogleClientSecret(e.target.value)}
+              placeholder={googleSecretConfigured ? "Leave blank to keep saved secret" : ""}
+              className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-emerald-600 focus:outline-none"
+            />
+          </label>
+          <label className="block text-xs font-medium text-slate-300">
+            Refresh token {googleRefreshConfigured ? <span className="text-slate-500">(saved)</span> : null}
+            <input
+              type="password"
+              value={googleRefreshToken}
+              onChange={(e) => setGoogleRefreshToken(e.target.value)}
+              placeholder={googleRefreshConfigured ? "Leave blank to keep saved token" : ""}
+              className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-emerald-600 focus:outline-none"
+            />
+          </label>
+          <label className="block text-xs font-medium text-slate-300">
+            Calendar ID
+            <input
+              type="text"
+              value={googleCalendarId}
+              onChange={(e) => setGoogleCalendarId(e.target.value)}
+              placeholder="primary"
+              className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-emerald-600 focus:outline-none"
+            />
+          </label>
+        </div>
+        <div className="mt-3 flex gap-2">
+          <button
+            type="button"
+            disabled={googleBusy}
+            onClick={() => void saveGoogleCalendar()}
+            className="rounded-md bg-emerald-500/90 px-3 py-1.5 text-xs font-medium text-emerald-950 disabled:opacity-50"
+          >
+            Save calendar access
+          </button>
+          <button
+            type="button"
+            disabled={googleBusy}
+            onClick={() => void testGoogleCalendar()}
+            className="rounded-md border border-slate-600 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-900 disabled:opacity-50"
+          >
+            Test calendar
+          </button>
+        </div>
+        {googleMsg ? <p className="mt-2 text-xs text-slate-400">{googleMsg}</p> : null}
       </section>
 
       <section className="mt-6 p-5">

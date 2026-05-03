@@ -17,6 +17,8 @@ pub struct ResolvedIdentityWire {
     pub avatar: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
+    #[serde(default)]
+    pub agent_service_name: String,
 }
 
 impl From<&ResolvedIdentity> for ResolvedIdentityWire {
@@ -28,6 +30,7 @@ impl From<&ResolvedIdentity> for ResolvedIdentityWire {
             pubkey_pem: r.pubkey_pem.clone(),
             avatar: r.avatar.clone(),
             description: r.description.clone(),
+            agent_service_name: r.agent_service_name.clone(),
         }
     }
 }
@@ -48,6 +51,18 @@ impl TryFrom<ResolvedIdentityWire> for ResolvedIdentity {
             pubkey_pem: w.pubkey_pem,
             avatar: w.avatar,
             description: w.description,
+            agent_service_name: nonempty_agent_service_name(&w.agent_service_name)?,
         })
+    }
+}
+
+fn nonempty_agent_service_name(raw: &str) -> Result<String> {
+    let value = raw.trim();
+    if value.is_empty() {
+        Err(AntonError::InvalidResolvedIdentityWire(
+            "agentServiceName".into(),
+        ))
+    } else {
+        Ok(value.to_string())
     }
 }

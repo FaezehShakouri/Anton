@@ -9,6 +9,7 @@ use anton_core::messaging::ChatMessage;
 use parking_lot::Mutex;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 
 use crate::chat::{self, ChatState, ResolverState};
@@ -130,6 +131,103 @@ pub struct AgentSummaryResponse {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CalendarDraftResponse {
+    pub id: String,
+    pub peer: String,
+    pub title: String,
+    pub description: String,
+    pub start: String,
+    pub end: String,
+    pub timezone: String,
+    pub location: String,
+    pub attendees: Vec<String>,
+    pub status: String,
+    pub source: String,
+    pub request_id: String,
+    pub available: bool,
+    pub message: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CalendarProposalRequest {
+    pub title: String,
+    #[serde(default)]
+    pub description: String,
+    pub start: String,
+    pub end: String,
+    #[serde(default)]
+    pub timezone: String,
+    #[serde(default)]
+    pub location: String,
+    #[serde(default)]
+    pub attendees: Vec<String>,
+    #[serde(default)]
+    pub request_id: Option<String>,
+    #[serde(default)]
+    pub requires_human_confirmation: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CalendarProposalResponse {
+    pub status: String,
+    pub draft_id: String,
+    pub available: bool,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GoogleCalendarSettingsResponse {
+    pub client_id: String,
+    pub calendar_id: String,
+    pub client_secret_configured: bool,
+    pub refresh_token_configured: bool,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GoogleCalendarSettingsUpdate {
+    pub client_id: String,
+    pub calendar_id: String,
+    #[serde(default)]
+    pub client_secret: Option<String>,
+    #[serde(default)]
+    pub refresh_token: Option<String>,
+    #[serde(default)]
+    pub clear_secrets: bool,
+}
+
+#[derive(Clone, Debug)]
+struct GoogleCalendarSettings {
+    client_id: String,
+    client_secret: Option<String>,
+    refresh_token: Option<String>,
+    calendar_id: String,
+}
+
+impl GoogleCalendarSettings {
+    fn response(&self) -> GoogleCalendarSettingsResponse {
+        GoogleCalendarSettingsResponse {
+            client_id: self.client_id.clone(),
+            calendar_id: self.calendar_id.clone(),
+            client_secret_configured: self
+                .client_secret
+                .as_ref()
+                .is_some_and(|value| !value.trim().is_empty()),
+            refresh_token_configured: self
+                .refresh_token
+                .as_ref()
+                .is_some_and(|value| !value.trim().is_empty()),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AgentTestResponse {
     pub ok: bool,
     pub message: String,
@@ -226,6 +324,68 @@ impl AgentState {
             clear_agent_loop_limits(&conn).map_err(|e| e.to_string())?;
         }
         Ok(next)
+    }
+
+    fn google_calendar_settings(&self) -> Result<GoogleCalendarSettings, String> {
+        let conn = self.conn()?;
+        load_google_calendar_settings(&conn).map_err(|e| e.to_string())
+    }
+
+    fn set_google_calendar_settings(
+        &self,
+        update: GoogleCalendarSettingsUpdate,
+    ) -> Result<GoogleCalendarSettings, String> {
+        let conn = self.conn()?;
+        let current = load_google_calendar_settings(&conn).map_err(|e| e.to_string())?;
+        let calendar_id = update.calendar_id.trim();
+        let next = GoogleCalendarSettings {
+            client_id: update.client_id.trim().to_string(),
+            calendar_id: if calendar_id.is_empty() {
+                "primary".to_string()
+            } else {
+                calendar_id.to_string()
+            },
+            client_secret: if update.clear_secrets {
+                None
+            } else {
+                update
+                    .client_secret
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .or(current.client_secret)
+            },
+            refresh_token: if update.clear_secrets {
+                None
+            } else {
+                update
+                    .refresh_token
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .or(current.refresh_token)
+            },
+        };
+        save_google_calendar_settings(&conn, &next).map_err(|e| e.to_string())?;
+        Ok(next)
+    }
+
+    fn calendar_drafts_for_peer(&self, peer: &str) -> Result<Vec<CalendarDraftResponse>, String> {
+        let conn = self.conn()?;
+        load_calendar_drafts(&conn, Some(&normalize_chat_name(peer))).map_err(|e| e.to_string())
+    }
+
+    fn calendar_draft(&self, draft_id: &str) -> Result<CalendarDraftResponse, String> {
+        let conn = self.conn()?;
+        load_calendar_draft(&conn, draft_id).map_err(|e| e.to_string())
+    }
+
+    fn update_calendar_draft_status(&self, draft_id: &str, status: &str) -> Result<(), String> {
+        let conn = self.conn()?;
+        conn.execute(
+            "UPDATE calendar_event_drafts SET status = ?2, updated_at = ?3 WHERE id = ?1",
+            params![draft_id, status, now_ms()],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(())
     }
 
     fn conversation_enabled(&self, peer: &str) -> Result<bool, String> {
@@ -363,6 +523,145 @@ pub fn agent_update_settings(
     settings: AgentSettingsUpdate,
 ) -> Result<AgentSettingsResponse, String> {
     Ok(state.set_settings(settings)?.response())
+}
+
+#[tauri::command]
+pub fn agent_get_google_calendar_settings(
+    state: State<'_, AgentState>,
+) -> Result<GoogleCalendarSettingsResponse, String> {
+    Ok(state.google_calendar_settings()?.response())
+}
+
+#[tauri::command]
+pub fn agent_update_google_calendar_settings(
+    state: State<'_, AgentState>,
+    settings: GoogleCalendarSettingsUpdate,
+) -> Result<GoogleCalendarSettingsResponse, String> {
+    Ok(state.set_google_calendar_settings(settings)?.response())
+}
+
+#[tauri::command]
+pub async fn agent_test_google_calendar(
+    state: State<'_, AgentState>,
+) -> Result<AgentTestResponse, String> {
+    let settings = state.google_calendar_settings()?;
+    let token = google_access_token(&settings).await?;
+    let start = "2026-01-01T00:00:00Z";
+    let end = "2026-01-01T00:30:00Z";
+    let available = google_calendar_available(&settings, &token, &start, &end)
+        .await
+        .map_err(|e| format!("Google Calendar check failed: {e}"))?;
+    Ok(AgentTestResponse {
+        ok: true,
+        message: if available {
+            "Google Calendar connected. The next 30 minutes look free.".to_string()
+        } else {
+            "Google Calendar connected. The next 30 minutes are busy.".to_string()
+        },
+    })
+}
+
+#[tauri::command]
+pub fn agent_list_calendar_drafts(
+    state: State<'_, AgentState>,
+    peer: String,
+) -> Result<Vec<CalendarDraftResponse>, String> {
+    state.calendar_drafts_for_peer(&peer)
+}
+
+#[tauri::command]
+pub async fn agent_update_calendar_draft<R: Runtime>(
+    app: AppHandle<R>,
+    state: State<'_, AgentState>,
+    chat_state: State<'_, ChatState>,
+    resolver: State<'_, ResolverState>,
+    session: State<'_, IdentitySessionState>,
+    messaging: State<'_, MessagingState>,
+    chat_store: State<'_, ChatStoreState>,
+    sidecar_state: State<'_, AxlSidecarState>,
+    draft_id: String,
+    action: String,
+    counter_start: Option<String>,
+    counter_end: Option<String>,
+) -> Result<CalendarDraftResponse, String> {
+    let action = action.trim().to_lowercase();
+    let draft = state.calendar_draft(&draft_id)?;
+    match action.as_str() {
+        "accept" => {
+            let settings = state.google_calendar_settings()?;
+            if settings.response().refresh_token_configured {
+                let token = google_access_token(&settings).await?;
+                google_insert_calendar_event(&settings, &token, &draft).await?;
+            }
+            state.update_calendar_draft_status(&draft_id, "accepted")?;
+            let _ = chat::send_chat_message(
+                &app,
+                &chat_state,
+                &resolver,
+                &session,
+                &messaging,
+                &chat_store,
+                &sidecar_state,
+                draft.peer.clone(),
+                format!(
+                    "Accepted calendar proposal: {} ({})",
+                    draft.title, draft.start
+                ),
+                None,
+                false,
+                false,
+            )
+            .await;
+        }
+        "reject" => {
+            state.update_calendar_draft_status(&draft_id, "rejected")?;
+            let _ = chat::send_chat_message(
+                &app,
+                &chat_state,
+                &resolver,
+                &session,
+                &messaging,
+                &chat_store,
+                &sidecar_state,
+                draft.peer.clone(),
+                format!("Rejected calendar proposal: {}", draft.title),
+                None,
+                false,
+                false,
+            )
+            .await;
+        }
+        "counter" => {
+            update_calendar_draft_counter(
+                &state.conn()?,
+                &draft_id,
+                counter_start.as_deref().unwrap_or(draft.start.as_str()),
+                counter_end.as_deref().unwrap_or(draft.end.as_str()),
+            )
+            .map_err(|e| e.to_string())?;
+            let updated = state.calendar_draft(&draft_id)?;
+            let _ = chat::send_chat_message(
+                &app,
+                &chat_state,
+                &resolver,
+                &session,
+                &messaging,
+                &chat_store,
+                &sidecar_state,
+                updated.peer.clone(),
+                format!(
+                    "Suggested a new time for calendar proposal: {} ({} - {})",
+                    updated.title, updated.start, updated.end
+                ),
+                None,
+                false,
+                false,
+            )
+            .await;
+        }
+        _ => return Err("Calendar draft action must be accept, reject, or counter.".to_string()),
+    }
+    state.calendar_draft(&draft_id)
 }
 
 #[tauri::command]
@@ -571,6 +870,78 @@ pub async fn summarize_conversation_for_peer<R: Runtime>(
     })
 }
 
+pub async fn propose_calendar_event_for_peer<R: Runtime>(
+    app: &AppHandle<R>,
+    peer: &str,
+    proposal: CalendarProposalRequest,
+) -> Result<CalendarProposalResponse, String> {
+    let peer = normalize_chat_name(peer);
+    if proposal.title.trim().is_empty() {
+        return Err("Calendar proposal requires a title.".to_string());
+    }
+    if proposal.start.trim().is_empty() || proposal.end.trim().is_empty() {
+        return Err("Calendar proposal requires start and end times.".to_string());
+    }
+    let agent_state = app
+        .try_state::<AgentState>()
+        .ok_or_else(|| "Agent state is not available.".to_string())?;
+    let settings = agent_state.google_calendar_settings()?;
+    let availability = match google_access_token(&settings).await {
+        Ok(token) => google_calendar_available(
+            &settings,
+            &token,
+            proposal.start.trim(),
+            proposal.end.trim(),
+        )
+        .await
+        .map(|available| {
+            if available {
+                (
+                    true,
+                    "This time looks free. Waiting for user confirmation.".to_string(),
+                )
+            } else {
+                (
+                    false,
+                    "This time appears busy. Waiting for user confirmation or a counter-proposal."
+                        .to_string(),
+                )
+            }
+        })
+        .unwrap_or_else(|err| {
+            (
+                true,
+                format!(
+                    "Draft saved, but Google Calendar availability could not be checked: {err}"
+                ),
+            )
+        }),
+        Err(_) => (
+            true,
+            "Draft saved. Google Calendar is not configured, so availability was not checked."
+                .to_string(),
+        ),
+    };
+    let message = if proposal.requires_human_confirmation {
+        availability.1
+    } else {
+        format!(
+            "{} Anton will still require human confirmation before writing to calendar.",
+            availability.1
+        )
+    };
+    let conn = agent_state.conn()?;
+    let draft = insert_calendar_draft(&conn, &peer, proposal, availability.0, &message)
+        .map_err(|e| e.to_string())?;
+    let _ = app.emit("calendar:draft-created", draft.clone());
+    Ok(CalendarProposalResponse {
+        status: draft.status,
+        draft_id: draft.id,
+        available: draft.available,
+        message: draft.message,
+    })
+}
+
 pub fn handoff_to_human_for_peer<R: Runtime>(
     app: &AppHandle<R>,
     peer: &str,
@@ -738,6 +1109,34 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
         );
         CREATE INDEX IF NOT EXISTS idx_agent_reply_log_peer_created
             ON agent_reply_log(peer, created_at);
+        CREATE TABLE IF NOT EXISTS google_calendar_settings (
+            id INTEGER PRIMARY KEY CHECK(id = 1),
+            client_id TEXT NOT NULL DEFAULT '',
+            client_secret TEXT,
+            refresh_token TEXT,
+            calendar_id TEXT NOT NULL DEFAULT 'primary',
+            updated_at INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS calendar_event_drafts (
+            id TEXT PRIMARY KEY,
+            peer TEXT NOT NULL,
+            title TEXT NOT NULL,
+            description TEXT NOT NULL,
+            start_at TEXT NOT NULL,
+            end_at TEXT NOT NULL,
+            timezone TEXT NOT NULL,
+            location TEXT NOT NULL,
+            attendees_json TEXT NOT NULL,
+            status TEXT NOT NULL,
+            source TEXT NOT NULL,
+            request_id TEXT NOT NULL,
+            available INTEGER NOT NULL,
+            message TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_calendar_event_drafts_peer_status
+            ON calendar_event_drafts(peer, status, created_at);
         ",
     )?;
     let columns = table_columns(conn, "agent_settings")?;
@@ -757,6 +1156,21 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     let count: i64 = conn.query_row("SELECT COUNT(*) FROM agent_settings", [], |row| row.get(0))?;
     if count == 0 {
         save_settings(conn, &AgentSettings::defaults())?;
+    }
+    let calendar_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM google_calendar_settings", [], |row| {
+            row.get(0)
+        })?;
+    if calendar_count == 0 {
+        save_google_calendar_settings(
+            conn,
+            &GoogleCalendarSettings {
+                client_id: String::new(),
+                client_secret: None,
+                refresh_token: None,
+                calendar_id: "primary".to_string(),
+            },
+        )?;
     }
     Ok(())
 }
@@ -809,6 +1223,332 @@ fn save_settings(conn: &Connection, settings: &AgentSettings) -> rusqlite::Resul
         ],
     )?;
     Ok(())
+}
+
+fn load_google_calendar_settings(conn: &Connection) -> rusqlite::Result<GoogleCalendarSettings> {
+    conn.query_row(
+        "SELECT client_id, client_secret, refresh_token, calendar_id FROM google_calendar_settings WHERE id = 1",
+        [],
+        |row| {
+            let calendar_id: String = row.get(3)?;
+            Ok(GoogleCalendarSettings {
+                client_id: row.get(0)?,
+                client_secret: row.get(1)?,
+                refresh_token: row.get(2)?,
+                calendar_id: if calendar_id.trim().is_empty() {
+                    "primary".to_string()
+                } else {
+                    calendar_id
+                },
+            })
+        },
+    )
+    .optional()
+    .map(|settings| {
+        settings.unwrap_or(GoogleCalendarSettings {
+            client_id: String::new(),
+            client_secret: None,
+            refresh_token: None,
+            calendar_id: "primary".to_string(),
+        })
+    })
+}
+
+fn save_google_calendar_settings(
+    conn: &Connection,
+    settings: &GoogleCalendarSettings,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO google_calendar_settings(id, client_id, client_secret, refresh_token, calendar_id, updated_at)
+         VALUES (1, ?1, ?2, ?3, ?4, ?5)
+         ON CONFLICT(id) DO UPDATE SET
+           client_id = excluded.client_id,
+           client_secret = excluded.client_secret,
+           refresh_token = excluded.refresh_token,
+           calendar_id = excluded.calendar_id,
+           updated_at = excluded.updated_at",
+        params![
+            settings.client_id,
+            settings.client_secret,
+            settings.refresh_token,
+            settings.calendar_id,
+            now_ms(),
+        ],
+    )?;
+    Ok(())
+}
+
+fn insert_calendar_draft(
+    conn: &Connection,
+    peer: &str,
+    proposal: CalendarProposalRequest,
+    available: bool,
+    message: &str,
+) -> rusqlite::Result<CalendarDraftResponse> {
+    let id = uuid::Uuid::new_v4().to_string();
+    let now = now_ms();
+    let attendees_json = serde_json::to_string(&proposal.attendees)
+        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+    let request_id = proposal
+        .request_id
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let timezone = if proposal.timezone.trim().is_empty() {
+        "UTC".to_string()
+    } else {
+        proposal.timezone.trim().to_string()
+    };
+    conn.execute(
+        "INSERT INTO calendar_event_drafts(
+            id, peer, title, description, start_at, end_at, timezone, location,
+            attendees_json, status, source, request_id, available, message, created_at, updated_at
+         )
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'pending', 'a2a', ?10, ?11, ?12, ?13, ?13)",
+        params![
+            id,
+            normalize_chat_name(peer),
+            proposal.title.trim(),
+            proposal.description.trim(),
+            proposal.start.trim(),
+            proposal.end.trim(),
+            timezone,
+            proposal.location.trim(),
+            attendees_json,
+            request_id,
+            available as i64,
+            message,
+            now,
+        ],
+    )?;
+    load_calendar_draft(conn, &id)
+}
+
+fn load_calendar_drafts(
+    conn: &Connection,
+    peer: Option<&str>,
+) -> rusqlite::Result<Vec<CalendarDraftResponse>> {
+    let sql = if peer.is_some() {
+        "SELECT id, peer, title, description, start_at, end_at, timezone, location, attendees_json, status, source, request_id, available, message, created_at, updated_at
+         FROM calendar_event_drafts WHERE peer = ?1 ORDER BY created_at DESC"
+    } else {
+        "SELECT id, peer, title, description, start_at, end_at, timezone, location, attendees_json, status, source, request_id, available, message, created_at, updated_at
+         FROM calendar_event_drafts ORDER BY created_at DESC"
+    };
+    let mut stmt = conn.prepare(sql)?;
+    let mapper = |row: &rusqlite::Row<'_>| calendar_draft_from_row(row);
+    let rows = if let Some(peer) = peer {
+        stmt.query_map(params![normalize_chat_name(peer)], mapper)?
+    } else {
+        stmt.query_map([], mapper)?
+    };
+    rows.collect()
+}
+
+fn load_calendar_draft(
+    conn: &Connection,
+    draft_id: &str,
+) -> rusqlite::Result<CalendarDraftResponse> {
+    conn.query_row(
+        "SELECT id, peer, title, description, start_at, end_at, timezone, location, attendees_json, status, source, request_id, available, message, created_at, updated_at
+         FROM calendar_event_drafts WHERE id = ?1",
+        params![draft_id],
+        |row| calendar_draft_from_row(row),
+    )
+}
+
+fn calendar_draft_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<CalendarDraftResponse> {
+    let attendees_raw: String = row.get(8)?;
+    let attendees = serde_json::from_str::<Vec<String>>(&attendees_raw).map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(8, rusqlite::types::Type::Text, Box::new(e))
+    })?;
+    Ok(CalendarDraftResponse {
+        id: row.get(0)?,
+        peer: row.get(1)?,
+        title: row.get(2)?,
+        description: row.get(3)?,
+        start: row.get(4)?,
+        end: row.get(5)?,
+        timezone: row.get(6)?,
+        location: row.get(7)?,
+        attendees,
+        status: row.get(9)?,
+        source: row.get(10)?,
+        request_id: row.get(11)?,
+        available: row.get::<_, i64>(12)? != 0,
+        message: row.get(13)?,
+        created_at: row.get(14)?,
+        updated_at: row.get(15)?,
+    })
+}
+
+fn update_calendar_draft_counter(
+    conn: &Connection,
+    draft_id: &str,
+    start: &str,
+    end: &str,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE calendar_event_drafts SET status = 'countered', start_at = ?2, end_at = ?3, updated_at = ?4 WHERE id = ?1",
+        params![draft_id, start.trim(), end.trim(), now_ms()],
+    )?;
+    Ok(())
+}
+
+#[derive(Debug, Deserialize)]
+struct GoogleTokenResponse {
+    access_token: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct GoogleFreeBusyResponse {
+    calendars: std::collections::HashMap<String, GoogleFreeBusyCalendar>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GoogleFreeBusyCalendar {
+    busy: Vec<serde_json::Value>,
+}
+
+async fn google_access_token(settings: &GoogleCalendarSettings) -> Result<String, String> {
+    let client_id = settings.client_id.trim();
+    let client_secret = settings.client_secret.as_deref().unwrap_or_default().trim();
+    let refresh_token = settings.refresh_token.as_deref().unwrap_or_default().trim();
+    if client_id.is_empty() || client_secret.is_empty() || refresh_token.is_empty() {
+        return Err(
+            "Configure Google Calendar client ID, client secret, and refresh token in Settings."
+                .to_string(),
+        );
+    }
+    let client = reqwest::Client::new();
+    let form_body = format!(
+        "client_id={}&client_secret={}&refresh_token={}&grant_type=refresh_token",
+        percent_encode_form_value(client_id),
+        percent_encode_form_value(client_secret),
+        percent_encode_form_value(refresh_token),
+    );
+    let res = client
+        .post("https://oauth2.googleapis.com/token")
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(form_body)
+        .send()
+        .await
+        .map_err(|e| format!("Google OAuth request failed: {e}"))?;
+    let status = res.status();
+    let body = res
+        .text()
+        .await
+        .map_err(|e| format!("Read Google OAuth response: {e}"))?;
+    if !status.is_success() {
+        return Err(format!("Google OAuth returned {status}: {body}"));
+    }
+    let parsed: GoogleTokenResponse = serde_json::from_str(&body)
+        .map_err(|e| format!("Decode Google OAuth response: {e}: {body}"))?;
+    Ok(parsed.access_token)
+}
+
+async fn google_calendar_available(
+    settings: &GoogleCalendarSettings,
+    access_token: &str,
+    start: &str,
+    end: &str,
+) -> Result<bool, String> {
+    let calendar_id = calendar_id(settings);
+    let client = reqwest::Client::new();
+    let res = client
+        .post("https://www.googleapis.com/calendar/v3/freeBusy")
+        .bearer_auth(access_token)
+        .json(&json!({
+            "timeMin": start,
+            "timeMax": end,
+            "items": [{ "id": calendar_id }]
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("Google FreeBusy request failed: {e}"))?;
+    let status = res.status();
+    let body = res
+        .text()
+        .await
+        .map_err(|e| format!("Read Google FreeBusy response: {e}"))?;
+    if !status.is_success() {
+        return Err(format!("Google FreeBusy returned {status}: {body}"));
+    }
+    let parsed: GoogleFreeBusyResponse = serde_json::from_str(&body)
+        .map_err(|e| format!("Decode Google FreeBusy response: {e}: {body}"))?;
+    Ok(parsed
+        .calendars
+        .get(calendar_id.as_str())
+        .map(|calendar| calendar.busy.is_empty())
+        .unwrap_or(true))
+}
+
+async fn google_insert_calendar_event(
+    settings: &GoogleCalendarSettings,
+    access_token: &str,
+    draft: &CalendarDraftResponse,
+) -> Result<(), String> {
+    let calendar_id = percent_encode_path_segment(&calendar_id(settings));
+    let url = format!("https://www.googleapis.com/calendar/v3/calendars/{calendar_id}/events");
+    let client = reqwest::Client::new();
+    let res = client
+        .post(url)
+        .bearer_auth(access_token)
+        .json(&json!({
+            "summary": draft.title,
+            "description": draft.description,
+            "location": draft.location,
+            "start": {
+                "dateTime": draft.start,
+                "timeZone": draft.timezone
+            },
+            "end": {
+                "dateTime": draft.end,
+                "timeZone": draft.timezone
+            },
+            "extendedProperties": {
+                "private": {
+                    "antonDraftId": draft.id,
+                    "antonPeer": draft.peer,
+                    "antonAttendees": draft.attendees.join(",")
+                }
+            }
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("Google Calendar insert failed: {e}"))?;
+    let status = res.status();
+    let body = res
+        .text()
+        .await
+        .map_err(|e| format!("Read Google Calendar insert response: {e}"))?;
+    if !status.is_success() {
+        return Err(format!("Google Calendar insert returned {status}: {body}"));
+    }
+    Ok(())
+}
+
+fn calendar_id(settings: &GoogleCalendarSettings) -> String {
+    if settings.calendar_id.trim().is_empty() {
+        "primary".to_string()
+    } else {
+        settings.calendar_id.trim().to_string()
+    }
+}
+
+fn percent_encode_path_segment(value: &str) -> String {
+    let mut out = String::new();
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
+            out.push(byte as char);
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    out
+}
+
+fn percent_encode_form_value(value: &str) -> String {
+    percent_encode_path_segment(value).replace("%20", "+")
 }
 
 fn clear_agent_loop_limits(conn: &Connection) -> rusqlite::Result<()> {

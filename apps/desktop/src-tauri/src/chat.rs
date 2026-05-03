@@ -56,6 +56,7 @@ pub struct IdentityIpc {
     pub wallet: String,
     pub peer_id: String,
     pub pubkey_pem: String,
+    pub agent_service_name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub avatar: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -69,6 +70,7 @@ impl From<&ResolvedIdentity> for IdentityIpc {
             wallet: r.wallet.to_checksum(None),
             peer_id: r.peer_id_hex.clone(),
             pubkey_pem: r.pubkey_pem.clone(),
+            agent_service_name: r.agent_service_name.clone(),
             avatar: r.avatar.clone(),
             description: r.description.clone(),
         }

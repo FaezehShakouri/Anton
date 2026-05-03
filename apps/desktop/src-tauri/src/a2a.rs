@@ -19,8 +19,6 @@ use crate::agent;
 use crate::chat::ResolverState;
 use crate::sidecar::AxlSidecarState;
 
-const SERVICE_NAME: &str = "son_of_anton";
-
 #[derive(Default)]
 pub struct A2aServiceState {
     handles: Mutex<Vec<JoinHandle<()>>>,
@@ -60,7 +58,7 @@ async fn serve_a2a<R: Runtime>(app: Arc<AppHandle<R>>) -> Result<(), String> {
     let router = Router::new()
         .route("/", post(a2a_post::<R>))
         .route("/a2a", post(a2a_post::<R>))
-        .route("/.well-known/agent-card.json", get(agent_card))
+        .route("/.well-known/agent-card.json", get(agent_card::<R>))
         .with_state(app);
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", DEFAULT_AXL_A2A_PORT))
         .await
@@ -75,8 +73,8 @@ async fn serve_mcp_router<R: Runtime>(app: Arc<AppHandle<R>>) -> Result<(), Stri
     let router = Router::new()
         .route("/route", post(mcp_route::<R>))
         .route("/health", get(|| async { Json(json!({ "ok": true })) }))
-        .route("/services", get(services))
-        .route("/register", post(register_service))
+        .route("/services", get(services::<R>))
+        .route("/register", post(register_service::<R>))
         .route("/register/{service}", delete(delete_service))
         .with_state(app);
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", DEFAULT_AXL_ROUTER_PORT))
@@ -88,16 +86,19 @@ async fn serve_mcp_router<R: Runtime>(app: Arc<AppHandle<R>>) -> Result<(), Stri
         .map_err(|e| format!("serve MCP router: {e}"))
 }
 
-async fn agent_card() -> impl IntoResponse {
+async fn agent_card<R: Runtime>(AxumState(app): AxumState<Arc<AppHandle<R>>>) -> impl IntoResponse {
+    let service_name = local_service_name(&app).ok();
     Json(json!({
         "name": "Anton Personal Agent",
         "description": "ENS-backed personal chat agent reachable over AXL A2A.",
+        "service": service_name,
         "version": "0.1.0",
         "skills": [
             skill("draft_reply", "Draft a reply for an ENS conversation without sending it."),
             skill("send_reply", "Send a signed Anton chat reply on behalf of the local user."),
             skill("summarize_conversation", "Summarize recent local conversation context."),
-            skill("handoff_to_human", "Disable agent mode and request manual human handling.")
+            skill("handoff_to_human", "Disable agent mode and request manual human handling."),
+            skill("propose_calendar_event", "Create a pending calendar proposal draft for human confirmation.")
         ]
     }))
 }
@@ -111,17 +112,25 @@ fn skill(id: &str, description: &str) -> Value {
     })
 }
 
-async fn services() -> impl IntoResponse {
-    Json(json!({
-        "services": [{
-            "service": SERVICE_NAME,
+async fn services<R: Runtime>(AxumState(app): AxumState<Arc<AppHandle<R>>>) -> impl IntoResponse {
+    match local_service_name(&app) {
+        Ok(service_name) => Json(json!({
+            "services": [{
+            "service": service_name,
             "endpoint": format!("http://127.0.0.1:{DEFAULT_AXL_A2A_PORT}")
         }]
-    }))
+        })),
+        Err(error) => Json(json!({ "services": [], "error": error })),
+    }
 }
 
-async fn register_service() -> impl IntoResponse {
-    Json(json!({ "ok": true, "service": SERVICE_NAME }))
+async fn register_service<R: Runtime>(
+    AxumState(app): AxumState<Arc<AppHandle<R>>>,
+) -> impl IntoResponse {
+    match local_service_name(&app) {
+        Ok(service_name) => Json(json!({ "ok": true, "service": service_name })),
+        Err(error) => Json(json!({ "ok": false, "error": error })),
+    }
 }
 
 async fn delete_service() -> impl IntoResponse {
@@ -174,8 +183,8 @@ async fn handle_mcp_envelope<R: Runtime>(app: &AppHandle<R>, payload: Value) -> 
     let service = payload
         .get("service")
         .and_then(Value::as_str)
-        .unwrap_or(SERVICE_NAME);
-    if service != SERVICE_NAME {
+        .unwrap_or_default();
+    if !service_matches_local(app, service) {
         return jsonrpc_error(Value::Null, -32601, "Unknown Anton MCP service.");
     }
     let request = payload.get("request").cloned().unwrap_or(payload);
@@ -242,6 +251,26 @@ fn tool_descriptors() -> Value {
                 },
                 "required": ["peer"]
             }
+        },
+        {
+            "name": "propose_calendar_event",
+            "description": "Ask whether the local user would accept a meeting draft.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "peer": { "type": "string" },
+                    "title": { "type": "string" },
+                    "description": { "type": "string" },
+                    "start": { "type": "string" },
+                    "end": { "type": "string" },
+                    "timezone": { "type": "string" },
+                    "location": { "type": "string" },
+                    "attendees": { "type": "array", "items": { "type": "string" } },
+                    "requestId": { "type": "string" },
+                    "requiresHumanConfirmation": { "type": "boolean" }
+                },
+                "required": ["peer", "title", "start", "end"]
+            }
         }
     ])
 }
@@ -290,6 +319,14 @@ async fn call_tool_by_name<R: Runtime>(
                 .map(|s| s.to_string());
             serde_json::to_value(agent::handoff_to_human_for_peer(app, &peer, reason)?)
                 .map_err(|e| e.to_string())
+        }
+        "propose_calendar_event" => {
+            let proposal = serde_json::from_value::<agent::CalendarProposalRequest>(arguments)
+                .map_err(|e| format!("Invalid calendar proposal arguments: {e}"))?;
+            serde_json::to_value(
+                agent::propose_calendar_event_for_peer(app, &peer, proposal).await?,
+            )
+            .map_err(|e| e.to_string())
         }
         other => Err(format!("Unknown Anton agent tool: {other}")),
     }
@@ -342,10 +379,14 @@ pub async fn agent_a2a_call_tool(
         .ok_or_else(|| "AXL sidecar is not running.".to_string())?;
     let local_ens = local_ens_name(&app)?;
     let tool_arguments = with_remote_conversation_peer(request.arguments, &local_ens)?;
+    let service_name = resolved.agent_service_name.trim().to_string();
+    if service_name.is_empty() {
+        return Err("Resolved peer is missing anton_agent_service.".to_string());
+    }
 
     let request_id = uuid::Uuid::new_v4().to_string();
     let mcp = json!({
-        "service": SERVICE_NAME,
+        "service": service_name,
         "request": {
             "jsonrpc": "2.0",
             "method": "tools/call",
@@ -377,6 +418,13 @@ pub async fn agent_a2a_call_tool(
     Ok(A2aCallToolResponse { ok: true, response })
 }
 
+fn local_service_name<R: Runtime>(app: &AppHandle<R>) -> Result<String, String> {
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let settings =
+        Settings::load_or_default(&Settings::default_path(&dir)).map_err(|e| e.to_string())?;
+    normalize_local_service_name(&settings.agent_service_name)
+}
+
 fn local_ens_name<R: Runtime>(app: &AppHandle<R>) -> Result<String, String> {
     let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let settings =
@@ -387,6 +435,22 @@ fn local_ens_name<R: Runtime>(app: &AppHandle<R>) -> Result<String, String> {
         .ok_or_else(|| {
             "Register or save your ENS name before calling remote A2A tools.".to_string()
         })
+}
+
+fn service_matches_local<R: Runtime>(app: &AppHandle<R>, service: &str) -> bool {
+    let service = service.trim();
+    local_service_name(app)
+        .map(|local| service == local)
+        .unwrap_or(false)
+}
+
+fn normalize_local_service_name(raw: &str) -> Result<String, String> {
+    let value = raw.trim();
+    if value.is_empty() {
+        Err("A2A service name is not configured. Set it in Settings and publish anton_agent_service in ENS.".to_string())
+    } else {
+        Ok(value.to_string())
+    }
 }
 
 fn with_remote_conversation_peer(arguments: Value, local_ens: &str) -> Result<Value, String> {
@@ -418,6 +482,7 @@ mod tests {
         assert!(names.contains(&"send_reply"));
         assert!(names.contains(&"summarize_conversation"));
         assert!(names.contains(&"handoff_to_human"));
+        assert!(names.contains(&"propose_calendar_event"));
     }
 
     #[test]

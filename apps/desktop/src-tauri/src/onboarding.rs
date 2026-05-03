@@ -110,6 +110,7 @@ pub struct UpdateEnsRecordsResponse {
     pub addr_tx_hash: String,
     pub peer_id_tx_hash: String,
     pub pubkey_tx_hash: String,
+    pub service_tx_hash: String,
 }
 
 fn settings_path<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
@@ -213,6 +214,16 @@ fn label_from_ens_name(name: &str) -> Result<String, String> {
         .strip_suffix(&suffix)
         .ok_or_else(|| format!("Saved ENS name must end with .{parent}."))?;
     normalize_label(label)
+}
+
+fn validated_agent_service_name(raw: &str) -> Result<String, String> {
+    let value = raw.trim();
+    if value.is_empty() {
+        return Err(
+            "Set your A2A service name in Settings before publishing ENS records.".to_string(),
+        );
+    }
+    Ok(value.to_string())
 }
 
 fn derive_from_mnemonic(mnemonic: &MnemonicPhrase) -> Result<(Wallet, Ed25519Identity), String> {
@@ -370,6 +381,11 @@ pub async fn register_username<R: Runtime>(
         .ed25519
         .to_public_pkcs8_pem()
         .map_err(|e| e.to_string())?;
+    let service_name = validated_agent_service_name(
+        &Settings::load_or_default(&settings_path(&app)?)
+            .map_err(|e| e.to_string())?
+            .agent_service_name,
+    )?;
     let owner = id.wallet.address();
     let peer_id = id.ed25519.peer_id_hex();
     let (parent_node, labelhash, node) = ens_nodes_for_label(&label);
@@ -444,6 +460,20 @@ pub async fn register_username<R: Runtime>(
         .watch()
         .await
         .map_err(|e| format!("wait for set axl_pubkey: {e}"))?;
+
+    let pending = resolver
+        .setText(
+            node,
+            "anton_agent_service".to_string(),
+            service_name.clone(),
+        )
+        .send()
+        .await
+        .map_err(|e| format!("set anton_agent_service: {e}"))?;
+    pending
+        .watch()
+        .await
+        .map_err(|e| format!("wait for set anton_agent_service: {e}"))?;
 
     let pending = if parent_owner == name_wrapper_addr {
         name_wrapper
@@ -532,6 +562,7 @@ pub async fn update_current_ens_records<R: Runtime>(
         .ed25519
         .to_public_pkcs8_pem()
         .map_err(|e| e.to_string())?;
+    let service_name = validated_agent_service_name(&settings.agent_service_name)?;
     let (_, _, node) = ens_nodes_for_label(&label);
 
     let registry = EnsRegistry::new(registry_addr, &provider);
@@ -580,12 +611,23 @@ pub async fn update_current_ens_records<R: Runtime>(
         .await
         .map_err(|e| format!("wait for set axl_pubkey: {e}"))?;
 
+    let pending = resolver
+        .setText(node, "anton_agent_service".to_string(), service_name)
+        .send()
+        .await
+        .map_err(|e| format!("set anton_agent_service: {e}"))?;
+    let service_tx_hash = pending
+        .watch()
+        .await
+        .map_err(|e| format!("wait for set anton_agent_service: {e}"))?;
+
     tracing::info!(
         target = "anton::onboarding",
         ens = ens.as_str(),
         addr_tx = format!("{addr_tx_hash:#x}"),
         peer_id_tx = format!("{peer_id_tx_hash:#x}"),
         pubkey_tx = format!("{pubkey_tx_hash:#x}"),
+        service_tx = format!("{service_tx_hash:#x}"),
         "updated ENS identity records"
     );
 
@@ -594,5 +636,6 @@ pub async fn update_current_ens_records<R: Runtime>(
         addr_tx_hash: format!("{addr_tx_hash:#x}"),
         peer_id_tx_hash: format!("{peer_id_tx_hash:#x}"),
         pubkey_tx_hash: format!("{pubkey_tx_hash:#x}"),
+        service_tx_hash: format!("{service_tx_hash:#x}"),
     })
 }

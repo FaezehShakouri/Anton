@@ -40,6 +40,10 @@ pub struct Settings {
     /// debug info. Off by default to keep logs noise-free.
     #[serde(default)]
     pub network_debug: bool,
+
+    /// AXL MCP/A2A service name advertised by this node and published to ENS.
+    #[serde(default)]
+    pub agent_service_name: String,
 }
 
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -59,6 +63,7 @@ impl Default for Settings {
             last_username: None,
             bootstrap_peers: Vec::new(),
             network_debug: false,
+            agent_service_name: String::new(),
         }
     }
 }
@@ -100,7 +105,12 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     let mut tmp_path = path.to_path_buf();
     let mut file_name = path
         .file_name()
-        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "settings path has no file name"))?
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "settings path has no file name",
+            )
+        })?
         .to_owned();
     file_name.push(".tmp");
     tmp_path.set_file_name(file_name);
@@ -139,6 +149,7 @@ mod tests {
             last_username: Some("alice".into()),
             bootstrap_peers: vec!["tls://my-peer:9001".into()],
             network_debug: true,
+            agent_service_name: "alice_agent".into(),
         };
         original.save(&path).unwrap();
         let loaded = Settings::load_or_default(&path).unwrap();
@@ -158,6 +169,7 @@ mod tests {
         assert_eq!(s.last_username, None);
         assert!(!s.network_debug);
         assert_eq!(s.version, SETTINGS_VERSION);
+        assert_eq!(s.agent_service_name, "");
     }
 
     #[test]

@@ -70,7 +70,9 @@ impl Default for EnsResolverConfig {
 /// Identity bundle resolved from ENS for a `*.anton.eth` style name.
 ///
 /// Mirrors [`packages/shared-types` Identity]: `addr(60)`, `axl_peer_id`, `axl_pubkey`,
-/// optional `avatar` / `description`.
+/// optional `avatar` / `description`, and an A2A service name. If a user-specific
+/// `anton_agent_service` text record is missing, resolution inherits the parent
+/// name's `anton_agent_service` value (for example `anton.eth`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResolvedIdentity {
     pub ens: String,
@@ -80,6 +82,7 @@ pub struct ResolvedIdentity {
     pub pubkey_pem: String,
     pub avatar: Option<String>,
     pub description: Option<String>,
+    pub agent_service_name: String,
 }
 
 impl ResolvedIdentity {
@@ -126,7 +129,8 @@ pub fn parse_axl_peer_hex(s: &str) -> Result<[u8; 32]> {
             hex_part.len()
         )));
     }
-    let bytes = hex::decode(hex_part).map_err(|e| AntonError::EnsInvalidPeerRecord(e.to_string()))?;
+    let bytes =
+        hex::decode(hex_part).map_err(|e| AntonError::EnsInvalidPeerRecord(e.to_string()))?;
     bytes
         .try_into()
         .map_err(|_| AntonError::EnsInvalidPeerRecord("length mismatch after decode".into()))
@@ -243,7 +247,7 @@ where
         let wallet =
             resolve_addr_60_universal(provider, universal_resolver, normalized_name).await?;
 
-        let (peer_raw, pubkey_pem, avatar, description) = tokio::try_join!(
+        let (peer_raw, pubkey_pem, avatar, description, agent_service_name) = tokio::try_join!(
             resolve_text_universal(provider, universal_resolver, normalized_name, "axl_peer_id"),
             resolve_text_universal(provider, universal_resolver, normalized_name, "axl_pubkey"),
             resolve_text_universal_optional(
@@ -257,6 +261,12 @@ where
                 universal_resolver,
                 normalized_name,
                 "description"
+            ),
+            resolve_text_universal_optional(
+                provider,
+                universal_resolver,
+                normalized_name,
+                "anton_agent_service"
             ),
         )?;
 
@@ -276,6 +286,14 @@ where
             return Err(AntonError::EnsMissingRecord("axl_pubkey"));
         }
 
+        let parent_service_name = match parent_name(normalized_name) {
+            Some(parent) => {
+                resolve_text_universal(provider, universal_resolver, parent, "anton_agent_service")
+                    .await?
+            }
+            None => return Err(AntonError::EnsMissingRecord("anton_agent_service")),
+        };
+
         Ok(ResolvedIdentity {
             ens: normalized_name.to_string(),
             wallet,
@@ -283,8 +301,30 @@ where
             pubkey_pem,
             avatar: nonempty_opt(avatar),
             description: nonempty_opt(description),
+            agent_service_name: resolve_agent_service_name(
+                &agent_service_name,
+                &parent_service_name,
+            )?,
         })
     }
+}
+
+fn parent_name(name: &str) -> Option<&str> {
+    name.split_once('.')
+        .map(|(_, parent)| parent)
+        .filter(|parent| !parent.trim().is_empty())
+}
+
+fn resolve_agent_service_name(user_value: &str, parent_value: &str) -> Result<String> {
+    let user_value = user_value.trim();
+    if !user_value.is_empty() {
+        return Ok(user_value.to_string());
+    }
+    let parent_value = parent_value.trim();
+    if !parent_value.is_empty() {
+        return Ok(parent_value.to_string());
+    }
+    Err(AntonError::EnsMissingRecord("anton_agent_service"))
 }
 
 #[async_trait]
@@ -337,21 +377,26 @@ async fn resolve_addr_60_universal<P: Provider<Ethereum>>(
         "resolve_addr_60_universal:call"
     );
 
-    let result = universal_resolve(provider, universal_resolver, Bytes::from(dns_name), call_data)
-        .await
-        .map_err(|e| {
-            tracing::debug!(
-                target = "anton_core::ens",
-                name=%name,
-                universal_resolver=?universal_resolver,
-                error=?e,
-                "resolve_addr_60_universal:revert_or_rpc_error",
-            );
-            AntonError::EnsResolution(format!(
-                "universal resolve addr(60): {e} {}",
-                ENS_RESOLUTION_HINT
-            ))
-        })?;
+    let result = universal_resolve(
+        provider,
+        universal_resolver,
+        Bytes::from(dns_name),
+        call_data,
+    )
+    .await
+    .map_err(|e| {
+        tracing::debug!(
+            target = "anton_core::ens",
+            name=%name,
+            universal_resolver=?universal_resolver,
+            error=?e,
+            "resolve_addr_60_universal:revert_or_rpc_error",
+        );
+        AntonError::EnsResolution(format!(
+            "universal resolve addr(60): {e} {}",
+            ENS_RESOLUTION_HINT
+        ))
+    })?;
 
     let result_bytes = result;
     if result_bytes.len() < 32 {
@@ -377,9 +422,14 @@ async fn resolve_text_universal<P: Provider<Ethereum>>(
     };
     let call_data = Bytes::from(EnsResolverSol::textCall::abi_encode(&call));
 
-    let result = universal_resolve(provider, universal_resolver, Bytes::from(dns_name), call_data)
-        .await
-        .map_err(|e| AntonError::EnsResolution(format!("universal resolve text {key}: {e}")))?;
+    let result = universal_resolve(
+        provider,
+        universal_resolver,
+        Bytes::from(dns_name),
+        call_data,
+    )
+    .await
+    .map_err(|e| AntonError::EnsResolution(format!("universal resolve text {key}: {e}")))?;
 
     EnsResolverSol::textCall::abi_decode_returns(&result)
         .map_err(|e| AntonError::EnsResolution(format!("decode text {key}: {e}")))
@@ -513,11 +563,7 @@ struct CcipGatewayResponse {
     message: Option<String>,
 }
 
-async fn fetch_ccip_gateway(
-    sender: &Address,
-    call_data: &Bytes,
-    urls: &[String],
-) -> Result<Bytes> {
+async fn fetch_ccip_gateway(sender: &Address, call_data: &Bytes, urls: &[String]) -> Result<Bytes> {
     if urls.is_empty() {
         return Err(AntonError::EnsResolution(
             "CCIP-Read OffchainLookup did not include gateway URLs".into(),
@@ -631,10 +677,7 @@ mod tests {
 
     #[test]
     fn normalize_trims_and_lowercases_labels() {
-        assert_eq!(
-            normalize_chat_name("  Alice.ANTON.eth "),
-            "alice.anton.eth"
-        );
+        assert_eq!(normalize_chat_name("  Alice.ANTON.eth "), "alice.anton.eth");
     }
 
     #[test]
@@ -658,7 +701,11 @@ mod tests {
             .expect("ENS_RPC_URL or ENS_MAINNET_RPC_URL");
         let r = connect_http(&url, EnsResolverConfig::default()).expect("connect");
         let name = r
-            .reverse_resolve(&"0xeE9eeaAB0Bb7D9B969D701f6f8212609EDeA252E".parse().unwrap())
+            .reverse_resolve(
+                &"0xeE9eeaAB0Bb7D9B969D701f6f8212609EDeA252E"
+                    .parse()
+                    .unwrap(),
+            )
             .await
             .expect("reverse");
         assert_eq!(name.as_deref(), Some("devrel.enslabs.eth"));

@@ -14,6 +14,7 @@ export type EnsName = `${string}.anton.eth` | string;
  *   - addr(60)         → wallet
  *   - text axl_peer_id → peerId
  *   - text axl_pubkey  → pubkeyPem
+ *   - text anton_agent_service → agentServiceName (inherits parent default when missing)
  *   - text avatar      → avatar
  *   - text description → description
  */
@@ -22,6 +23,7 @@ export interface Identity {
   wallet: EthAddress;
   peerId: AxlPeerId;
   pubkeyPem: string;
+  agentServiceName: string;
   avatar?: string;
   description?: string;
 }
@@ -32,6 +34,7 @@ export interface ResolvedIdentityWire {
   wallet: string;
   peerIdHex: string;
   pubkeyPem: string;
+  agentServiceName: string;
   avatar?: string;
   description?: string;
 }

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { useNavigate, useParams } from "react-router-dom";
-import type { ChatMessage, ChatReply } from "@anton/shared-types";
+import type { CalendarDraft, ChatMessage, ChatReply } from "@anton/shared-types";
 import { ipc } from "../lib/ipc";
 import { cn } from "../lib/cn";
 
@@ -10,6 +10,7 @@ type Resolved = {
   wallet: string;
   peerId: string;
   pubkeyPem: string;
+  agentServiceName: string;
   avatar?: string;
   description?: string;
 };
@@ -23,7 +24,7 @@ type AgentStatus = {
   disabledUntil?: number | null;
 };
 
-type A2aTool = "draft_reply" | "send_reply" | "summarize_conversation" | "handoff_to_human";
+type A2aTool = "draft_reply" | "send_reply" | "summarize_conversation" | "handoff_to_human" | "propose_calendar_event";
 
 type A2aCommand =
   | { kind: "skill"; tool: A2aTool; arguments: Record<string, unknown> }
@@ -68,6 +69,12 @@ const A2A_SKILLS: ReadonlyArray<{ tool: A2aTool; label: string; description: str
     description: "Ask the agent to stop and wait for the human.",
     accent: "from-rose-300 to-violet-300",
   },
+  {
+    tool: "propose_calendar_event",
+    label: "Calendar",
+    description: "Ask the peer agent to create a meeting draft.",
+    accent: "from-emerald-200 to-lime-300",
+  },
 ];
 
 const A2A_COMMAND_OPTIONS: ReadonlyArray<A2aCommandOption> = [
@@ -94,6 +101,12 @@ const A2A_COMMAND_OPTIONS: ReadonlyArray<A2aCommandOption> = [
     insertText: "/handoff",
     label: "Handoff",
     description: "Ask the remote agent to wait for the human.",
+  },
+  {
+    command: "calendar",
+    insertText: "/calendar ",
+    label: "Calendar proposal",
+    description: "Create a remote pending meeting draft.",
   },
 ];
 
@@ -127,6 +140,15 @@ function shortEns(name: string): string {
   return name.replace(/\.anton\.eth$/i, "");
 }
 
+function localDateTimeInput(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function inputDateTimeToIso(value: string): string {
+  return value ? new Date(value).toISOString() : "";
+}
+
 function isLocalSkillMessage(message: TimelineMessage): message is LocalSkillMessage {
   return "timelineKind" in message;
 }
@@ -145,6 +167,10 @@ function commandTextForTool(tool: A2aTool, args: Record<string, unknown>): strin
   if (tool === "handoff_to_human") {
     const reason = typeof args.reason === "string" ? args.reason.trim() : "";
     return reason && reason !== "A2A handoff requested from Anton UI." ? `/handoff ${reason}` : "/handoff";
+  }
+  if (tool === "propose_calendar_event") {
+    const title = typeof args.title === "string" ? args.title.trim() : "";
+    return title ? `/calendar ${title}` : "/calendar";
   }
   return `/${tool}`;
 }
@@ -171,6 +197,26 @@ function parseA2aCommand(text: string): A2aCommand | null {
       kind: "skill",
       tool: "handoff_to_human",
       arguments: { reason: remainder || "A2A handoff requested from Anton UI." },
+    };
+  }
+  if (command === "calendar" || command === "meeting") {
+    const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    tomorrow.setMinutes(0, 0, 0);
+    const end = new Date(tomorrow.getTime() + 30 * 60 * 1000);
+    return {
+      kind: "skill",
+      tool: "propose_calendar_event",
+      arguments: {
+        title: remainder || "Meeting proposal",
+        description: remainder || "Meeting proposed from Anton chat.",
+        start: tomorrow.toISOString(),
+        end: end.toISOString(),
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+        location: "",
+        attendees: [],
+        requestId: crypto.randomUUID(),
+        requiresHumanConfirmation: true,
+      },
     };
   }
 
@@ -203,6 +249,12 @@ export function ChatPage() {
   const [a2aBusy, setA2aBusy] = useState<A2aTool | null>(null);
   const [a2aStatus, setA2aStatus] = useState<string | null>(null);
   const [displayedA2aStatus, setDisplayedA2aStatus] = useState("");
+  const [calendarDrafts, setCalendarDrafts] = useState<CalendarDraft[]>([]);
+  const [calendarBusy, setCalendarBusy] = useState<string | null>(null);
+  const [proposalTitle, setProposalTitle] = useState("Project sync");
+  const [proposalStart, setProposalStart] = useState("");
+  const [proposalEnd, setProposalEnd] = useState("");
+  const [proposalLocation, setProposalLocation] = useState("");
   const messageListRef = useRef<HTMLDivElement | null>(null);
   const draftInputRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -242,11 +294,24 @@ export function ChatPage() {
     setMessages(list);
   }, []);
 
+  const refreshCalendarDrafts = useCallback(async (ensKey: string) => {
+    const drafts = await ipc("agent_list_calendar_drafts", { peer: ensKey });
+    setCalendarDrafts(drafts);
+  }, []);
+
   const addLocalSkillMessage = useCallback((peer: string, message: LocalSkillMessage) => {
     setLocalSkillMessages((previous) => ({
       ...previous,
       [peer]: [...(previous[peer] ?? []), message],
     }));
+  }, []);
+
+  useEffect(() => {
+    const start = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    start.setMinutes(0, 0, 0);
+    const end = new Date(start.getTime() + 30 * 60 * 1000);
+    setProposalStart(localDateTimeInput(start));
+    setProposalEnd(localDateTimeInput(end));
   }, []);
 
   useEffect(() => {
@@ -309,6 +374,7 @@ export function ChatPage() {
       setAgentEnabled(false);
       setAgentStatus(null);
       setA2aStatus(null);
+      setCalendarDrafts([]);
       setClearConfirming(false);
       return;
     }
@@ -316,6 +382,7 @@ export function ChatPage() {
       try {
         await ipc("chat_open", { ens: activeNorm });
         await refreshMessages(activeNorm);
+        await refreshCalendarDrafts(activeNorm);
         const mode = await ipc("agent_get_conversation_mode", { peer: activeNorm });
         setAgentEnabled(mode.enabled);
       } catch {
@@ -323,7 +390,7 @@ export function ChatPage() {
       }
     })();
     setClearConfirming(false);
-  }, [activeNorm, refreshMessages]);
+  }, [activeNorm, refreshCalendarDrafts, refreshMessages]);
 
   useEffect(() => {
     if (!clearConfirming) return;
@@ -382,6 +449,17 @@ export function ChatPage() {
       void unlisten.then((u) => u());
     };
   }, [activeNorm, refreshMessages]);
+
+  useEffect(() => {
+    const unlisten = listen<CalendarDraft>("calendar:draft-created", (ev) => {
+      const draft = ev.payload;
+      if (!draft?.peer || draft.peer.toLowerCase() !== activeNorm) return;
+      void refreshCalendarDrafts(draft.peer);
+    });
+    return () => {
+      void unlisten.then((u) => u());
+    };
+  }, [activeNorm, refreshCalendarDrafts]);
 
   const handleResolve = async () => {
     const name = query.trim();
@@ -460,7 +538,7 @@ export function ChatPage() {
     setSendBusy(true);
     try {
       if (command?.kind === "unknown") {
-        setResolveError(`Unknown skill command /${command.command}. Try /summarize, /draft, /send, or /handoff.`);
+        setResolveError(`Unknown skill command /${command.command}. Try /summarize, /draft, /send, /handoff, or /calendar.`);
         return;
       }
       if (command?.kind === "skill") {
@@ -544,6 +622,10 @@ export function ChatPage() {
         ? `Remote agent sent signed reply ${messageId}. Waiting for AXL delivery…`
         : "Remote agent sent a signed reply. Waiting for AXL delivery…";
     }
+    if (tool === "propose_calendar_event" && typeof result === "object" && result !== null) {
+      const proposal = result as { status?: string; draftId?: string; available?: boolean; message?: string };
+      return `Calendar proposal: ${proposal.message ?? proposal.status ?? "Draft created."}`;
+    }
     return typeof result === "string" ? result : JSON.stringify(result);
   };
 
@@ -601,6 +683,9 @@ export function ChatPage() {
           void refreshMessages(peer);
         }, 4_000);
       }
+      if (tool === "propose_calendar_event") {
+        await refreshCalendarDrafts(peer);
+      }
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       setA2aStatus(message);
@@ -619,6 +704,61 @@ export function ChatPage() {
     } finally {
       setA2aBusy(null);
     }
+  };
+
+  const callCalendarProposal = async () => {
+    if (!activeNorm) return;
+    const title = proposalTitle.trim() || "Meeting proposal";
+    const start = inputDateTimeToIso(proposalStart);
+    const end = inputDateTimeToIso(proposalEnd);
+    if (!start || !end) {
+      setResolveError("Add a start and end time for the calendar proposal.");
+      return;
+    }
+    await callA2aTool("propose_calendar_event", {
+      title,
+      description: draft.trim() || `Meeting proposed from Anton chat with ${shortEns(activeNorm)}.`,
+      start,
+      end,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+      location: proposalLocation.trim(),
+      attendees: [currentUserEns, activeNorm].filter(Boolean),
+      requestId: crypto.randomUUID(),
+      requiresHumanConfirmation: true,
+    });
+  };
+
+  const updateCalendarDraft = async (
+    draftId: string,
+    action: "accept" | "reject" | "counter",
+    counterStart?: string,
+    counterEnd?: string,
+  ) => {
+    if (!activeNorm) return;
+    setCalendarBusy(draftId);
+    setResolveError(null);
+    try {
+      await ipc("agent_update_calendar_draft", {
+        draftId,
+        action,
+        ...(counterStart ? { counterStart } : {}),
+        ...(counterEnd ? { counterEnd } : {}),
+      });
+      await refreshCalendarDrafts(activeNorm);
+      await refreshMessages(activeNorm);
+    } catch (e) {
+      setResolveError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setCalendarBusy(null);
+    }
+  };
+
+  const counterCalendarDraft = async (draft: CalendarDraft) => {
+    const nextStart = window.prompt("Suggest start time (ISO 8601)", draft.start);
+    if (!nextStart) return;
+    const nextEnd = window.prompt("Suggest end time (ISO 8601)", draft.end);
+    if (!nextEnd) return;
+    await updateCalendarDraft(draft.id, "counter", nextStart, nextEnd);
   };
 
   return (
@@ -1030,14 +1170,16 @@ export function ChatPage() {
                     type="button"
                     disabled={!activeNorm || a2aBusy != null}
                     onClick={() =>
-                      void callA2aTool(
-                        skill.tool,
-                        skill.tool === "send_reply" && draft.trim()
-                          ? { text: draft.trim() }
-                          : skill.tool === "handoff_to_human"
-                            ? { reason: "A2A handoff requested from Anton UI." }
-                            : {},
-                      )
+                      skill.tool === "propose_calendar_event"
+                        ? void callCalendarProposal()
+                        : void callA2aTool(
+                            skill.tool,
+                            skill.tool === "send_reply" && draft.trim()
+                              ? { text: draft.trim() }
+                              : skill.tool === "handoff_to_human"
+                                ? { reason: "A2A handoff requested from Anton UI." }
+                                : {},
+                          )
                     }
                     className="group flex w-full items-center gap-2.5 rounded-2xl border border-white/10 bg-white/[0.04] p-2.5 text-left transition hover:border-white/15 hover:bg-white/[0.07] disabled:cursor-not-allowed disabled:opacity-40"
                   >
@@ -1052,6 +1194,128 @@ export function ChatPage() {
                     </span>
                   </button>
                 ))}
+              </div>
+            </section>
+
+            <section>
+              <div className="mb-3 flex items-center justify-between">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-500">Meeting proposal</p>
+              </div>
+              <div className="space-y-2 rounded-3xl border border-white/10 bg-white/[0.03] p-3">
+                <input
+                  value={proposalTitle}
+                  onChange={(e) => setProposalTitle(e.target.value)}
+                  placeholder="Project sync"
+                  className="w-full rounded-2xl border border-white/10 bg-black/20 px-3 py-2 text-xs text-slate-100 placeholder:text-slate-600 focus:outline-none"
+                />
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    type="datetime-local"
+                    value={proposalStart}
+                    onChange={(e) => setProposalStart(e.target.value)}
+                    className="min-w-0 rounded-2xl border border-white/10 bg-black/20 px-3 py-2 text-xs text-slate-100 focus:outline-none"
+                  />
+                  <input
+                    type="datetime-local"
+                    value={proposalEnd}
+                    onChange={(e) => setProposalEnd(e.target.value)}
+                    className="min-w-0 rounded-2xl border border-white/10 bg-black/20 px-3 py-2 text-xs text-slate-100 focus:outline-none"
+                  />
+                </div>
+                <input
+                  value={proposalLocation}
+                  onChange={(e) => setProposalLocation(e.target.value)}
+                  placeholder="Location or meeting link"
+                  className="w-full rounded-2xl border border-white/10 bg-black/20 px-3 py-2 text-xs text-slate-100 placeholder:text-slate-600 focus:outline-none"
+                />
+                <p className="text-[11px] leading-4 text-slate-500">
+                  Uses the Calendar skill. The receiver gets a pending draft and must confirm before Google Calendar is written.
+                </p>
+              </div>
+            </section>
+
+            <section>
+              <div className="mb-3 flex items-center justify-between">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-500">Calendar drafts</p>
+                {activeNorm ? (
+                  <button
+                    type="button"
+                    onClick={() => void refreshCalendarDrafts(activeNorm)}
+                    className="text-[11px] font-medium text-slate-500 transition hover:text-slate-200"
+                  >
+                    Refresh
+                  </button>
+                ) : null}
+              </div>
+              <div className="space-y-2">
+                {calendarDrafts.length > 0 ? (
+                  calendarDrafts.map((item) => (
+                    <div key={item.id} className="rounded-3xl border border-white/10 bg-black/20 p-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-xs font-semibold text-slate-100">{item.title}</p>
+                          <p className="mt-1 text-[11px] leading-4 text-slate-500">
+                            {new Date(item.start).toLocaleString([], {
+                              month: "short",
+                              day: "numeric",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}{" "}
+                            -{" "}
+                            {new Date(item.end).toLocaleTimeString([], {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </p>
+                        </div>
+                        <span
+                          className={cn(
+                            "shrink-0 rounded-full px-2 py-0.5 text-[10px] uppercase tracking-[0.12em]",
+                            item.status === "pending"
+                              ? "border border-amber-300/20 bg-amber-300/10 text-amber-100"
+                              : "border border-white/10 bg-white/[0.05] text-slate-400",
+                          )}
+                        >
+                          {item.status}
+                        </span>
+                      </div>
+                      <p className="mt-2 text-[11px] leading-4 text-slate-400">{item.message}</p>
+                      {item.location ? <p className="mt-1 text-[11px] text-slate-500">{item.location}</p> : null}
+                      {item.status === "pending" ? (
+                        <div className="mt-3 grid grid-cols-3 gap-2">
+                          <button
+                            type="button"
+                            disabled={calendarBusy === item.id}
+                            onClick={() => void updateCalendarDraft(item.id, "accept")}
+                            className="rounded-xl bg-emerald-300 px-2 py-1.5 text-[11px] font-semibold text-emerald-950 disabled:opacity-40"
+                          >
+                            Accept
+                          </button>
+                          <button
+                            type="button"
+                            disabled={calendarBusy === item.id}
+                            onClick={() => void updateCalendarDraft(item.id, "reject")}
+                            className="rounded-xl border border-white/10 bg-white/[0.04] px-2 py-1.5 text-[11px] text-slate-300 disabled:opacity-40"
+                          >
+                            Reject
+                          </button>
+                          <button
+                            type="button"
+                            disabled={calendarBusy === item.id}
+                            onClick={() => void counterCalendarDraft(item)}
+                            className="rounded-xl border border-cyan-300/20 bg-cyan-300/10 px-2 py-1.5 text-[11px] text-cyan-100 disabled:opacity-40"
+                          >
+                            Counter
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                  ))
+                ) : (
+                  <p className="rounded-3xl border border-dashed border-white/10 bg-white/[0.02] p-4 text-sm leading-6 text-slate-500">
+                    Pending meeting drafts for this chat will appear here.
+                  </p>
+                )}
               </div>
             </section>
 

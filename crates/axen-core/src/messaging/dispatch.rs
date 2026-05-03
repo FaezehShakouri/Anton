@@ -15,10 +15,7 @@ use crate::transport::PeerId;
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum MessagingEvent {
-    ChatMessageReceived {
-        peer: String,
-        message: ChatMessage,
-    },
+    ChatMessageReceived { peer: String, message: ChatMessage },
 }
 
 pub struct DispatchContext<'a> {
@@ -80,7 +77,9 @@ impl MessageHandler for ChatTextV1Handler {
             .get("text")
             .and_then(|v| v.as_str())
             .ok_or_else(|| {
-                AntonError::InvalidEnvelopeBody("chat.text.v1 body missing string field `text`".into())
+                AntonError::InvalidEnvelopeBody(
+                    "chat.text.v1 body missing string field `text`".into(),
+                )
             })?;
         let reply_to = envelope
             .body
@@ -107,11 +106,17 @@ impl MessageHandler for ChatTextV1Handler {
             agent_generated,
         };
         ctx.conversations.append_message(&peer, msg.clone());
-        Ok(vec![MessagingEvent::ChatMessageReceived { peer, message: msg }])
+        Ok(vec![MessagingEvent::ChatMessageReceived {
+            peer,
+            message: msg,
+        }])
     }
 }
 
-pub fn verify_transport_matches_ens(transport_peer_id: &PeerId, resolved: &ResolvedIdentity) -> Result<()> {
+pub fn verify_transport_matches_ens(
+    transport_peer_id: &PeerId,
+    resolved: &ResolvedIdentity,
+) -> Result<()> {
     let expected = PeerId::from_hex(resolved.peer_id_hex.trim())?;
     if *transport_peer_id != expected {
         tracing::debug!(
@@ -189,6 +194,7 @@ mod tests {
             pubkey_pem: "-".into(),
             avatar: None,
             description: None,
+            agent_service_name: "test_agent".to_string(),
         };
         let body = chat_text_v1_body_json("hello", None, false);
         let body_vec = serde_json::to_vec(&body).unwrap();
@@ -212,7 +218,8 @@ mod tests {
         };
         let mut conv = Conversations::default();
         let dispatcher = MessageDispatcher::anton_default();
-        let events = ingest_verified_inbound(&peer, &resolved, &envelope, &mut conv, &dispatcher).unwrap();
+        let events =
+            ingest_verified_inbound(&peer, &resolved, &envelope, &mut conv, &dispatcher).unwrap();
         assert_eq!(events.len(), 1);
         assert_eq!(conv.messages_for_peer("alice.anton.eth").len(), 1);
     }
@@ -228,6 +235,7 @@ mod tests {
             pubkey_pem: "-".into(),
             avatar: None,
             description: None,
+            agent_service_name: "test_agent".to_string(),
         };
         let body = chat_text_v1_body_json("a", None, false);
         let body_vec = serde_json::to_vec(&body).unwrap();
@@ -255,7 +263,8 @@ mod tests {
         let dispatcher = MessageDispatcher::anton_default();
         ingest_verified_inbound(&peer, &resolved, &mk_env(1), &mut conv, &dispatcher).unwrap();
         assert!(matches!(
-            ingest_verified_inbound(&peer, &resolved, &mk_env(1), &mut conv, &dispatcher).unwrap_err(),
+            ingest_verified_inbound(&peer, &resolved, &mk_env(1), &mut conv, &dispatcher)
+                .unwrap_err(),
             AntonError::DuplicateNonce { .. }
         ));
     }
@@ -270,6 +279,7 @@ mod tests {
             pubkey_pem: "-".into(),
             avatar: None,
             description: None,
+            agent_service_name: "test_agent".to_string(),
         };
         let body = chat_text_v1_body_json("x", None, false);
         let body_vec = serde_json::to_vec(&body).unwrap();
@@ -294,7 +304,9 @@ mod tests {
         let wrong_peer = PeerId([0x99; 32]);
         let mut conv = Conversations::default();
         let dispatcher = MessageDispatcher::anton_default();
-        let events = ingest_verified_inbound(&wrong_peer, &resolved, &envelope, &mut conv, &dispatcher).unwrap();
+        let events =
+            ingest_verified_inbound(&wrong_peer, &resolved, &envelope, &mut conv, &dispatcher)
+                .unwrap();
         assert_eq!(events.len(), 1);
         assert_eq!(conv.messages_for_peer("alice.anton.eth").len(), 1);
     }
