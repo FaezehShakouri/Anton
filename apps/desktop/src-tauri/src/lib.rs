@@ -107,6 +107,7 @@ pub fn run() {
             onboarding::onboarding_check_username,
             onboarding::register_username,
             onboarding::update_current_ens_records,
+            chat::chat_current_user,
             chat::ens_resolve,
             chat::chat_open,
             chat::chat_close,

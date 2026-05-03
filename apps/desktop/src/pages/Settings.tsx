@@ -21,6 +21,8 @@ export function SettingsPage() {
   const [agentKeyConfigured, setAgentKeyConfigured] = useState(false);
   const [agentMsg, setAgentMsg] = useState<string | null>(null);
   const [agentBusy, setAgentBusy] = useState(false);
+  const [ensSyncBusy, setEnsSyncBusy] = useState(false);
+  const [ensSyncMsg, setEnsSyncMsg] = useState<string | null>(null);
 
   const refreshTopology = useCallback(async () => {
     const t = await ipc("axl_topology");
@@ -101,15 +103,50 @@ export function SettingsPage() {
     }
   };
 
+  const syncEnsRecords = async () => {
+    setEnsSyncBusy(true);
+    setEnsSyncMsg(null);
+    try {
+      const res = await ipc("update_current_ens_records");
+      setEnsSyncMsg(`Updated ${res.ens}`);
+    } catch (e) {
+      setEnsSyncMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setEnsSyncBusy(false);
+    }
+  };
+
   return (
-    <div className="mx-auto max-w-2xl px-6 py-10">
-      <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
-      <p className="mt-2 text-sm text-slate-400">
+    <div className="anton-screen overflow-y-auto px-6 py-10">
+      <div className="mx-auto max-w-3xl">
+      <p className="text-xs font-medium uppercase tracking-[0.28em] text-emerald-300/70">Control room</p>
+      <h1 className="mt-2 text-4xl font-semibold tracking-tight text-white">Settings</h1>
+      <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-400">
         Theme and identity tools will grow here. Bootstrap overrides are written to{" "}
         <code className="font-mono">settings.json</code> — no chat content.
       </p>
 
-      <section className="mt-8 rounded-lg border border-slate-800 bg-slate-900/40 p-4">
+      <section className="mt-8 p-5">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-sm font-medium text-slate-200">Identity</h2>
+            <p className="mt-1 text-xs leading-5 text-slate-500">
+              Publish the latest wallet, AXL peer ID, and public key records for your current ENS subname.
+            </p>
+          </div>
+          <button
+            type="button"
+            disabled={ensSyncBusy}
+            onClick={() => void syncEnsRecords()}
+            className="shrink-0 rounded-2xl bg-emerald-300 px-4 py-2 text-xs font-semibold text-emerald-950 transition hover:bg-emerald-200 disabled:opacity-40"
+          >
+            {ensSyncBusy ? "Syncing..." : "Sync ENS"}
+          </button>
+        </div>
+        {ensSyncMsg ? <p className="mt-3 text-xs text-slate-400">{ensSyncMsg}</p> : null}
+      </section>
+
+      <section className="mt-6 p-5">
         <h2 className="text-sm font-medium text-slate-200">AXL sidecar</h2>
         {topology ? (
           <dl className="mt-3 space-y-2 font-mono text-xs text-slate-400">
@@ -138,7 +175,7 @@ export function SettingsPage() {
         </button>
       </section>
 
-      <section className="mt-6 rounded-lg border border-slate-800 bg-slate-900/40 p-4">
+      <section className="mt-6 p-5">
         <h2 className="text-sm font-medium text-slate-200">Personal agent</h2>
         <p className="mt-1 text-xs text-slate-500">
           Configure the local auto-reply provider. OpenRouter uses{" "}
@@ -237,7 +274,7 @@ export function SettingsPage() {
         {agentMsg ? <p className="mt-2 text-xs text-slate-400">{agentMsg}</p> : null}
       </section>
 
-      <section className="mt-6 rounded-lg border border-slate-800 bg-slate-900/40 p-4">
+      <section className="mt-6 p-5">
         <h2 className="text-sm font-medium text-slate-200">Bootstrap peer overrides</h2>
         <p className="mt-1 text-xs text-slate-500">
           One <code className="font-mono">tls://host:9001</code> per line. Merged after ENS{" "}
@@ -262,12 +299,13 @@ export function SettingsPage() {
         {saveMsg ? <p className="mt-2 text-xs text-slate-400">{saveMsg}</p> : null}
       </section>
 
-      <section className="mt-6 rounded-lg border border-slate-800 bg-slate-900/40 p-4">
+      <section className="mt-6 p-5">
         <h2 className="text-sm font-medium text-slate-200">Privacy</h2>
         <p className="mt-2 text-xs text-slate-500">
           Chat is ephemeral by design — nothing on this page persists message bodies to disk.
         </p>
       </section>
+      </div>
     </div>
   );
 }

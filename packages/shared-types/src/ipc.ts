@@ -86,6 +86,10 @@ export interface TauriCommands {
     args: { name: EnsName };
     returns: Identity;
   };
+  chat_current_user: {
+    args: void;
+    returns: { ens: EnsName | null };
+  };
   chat_open: {
     args: { ens: EnsName };
     returns: { messages: ChatMessage[] };

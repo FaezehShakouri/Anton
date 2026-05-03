@@ -87,9 +87,23 @@ pub struct ChatSendResponse {
     pub id: String,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CurrentUserResponse {
+    pub ens: Option<String>,
+}
+
 fn settings_path<R: Runtime>(app: &AppHandle<R>) -> Result<std::path::PathBuf, String> {
     let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     Ok(Settings::default_path(&dir))
+}
+
+#[tauri::command]
+pub fn chat_current_user<R: Runtime>(app: AppHandle<R>) -> Result<CurrentUserResponse, String> {
+    let settings = Settings::load_or_default(&settings_path(&app)?).map_err(|e| e.to_string())?;
+    Ok(CurrentUserResponse {
+        ens: settings.last_username.map(|name| normalize_chat_name(&name)),
+    })
 }
 
 #[tauri::command]

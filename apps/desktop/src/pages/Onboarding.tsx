@@ -188,7 +188,7 @@ export function OnboardingPage() {
 
   if (vaultExists === null) {
     return (
-      <div className="flex h-full items-center justify-center text-sm text-slate-400">
+      <div className="anton-screen flex h-full items-center justify-center text-sm text-slate-400">
         Checking vault…
       </div>
     );
@@ -197,44 +197,44 @@ export function OnboardingPage() {
   /** Unlock screen */
   if (vaultExists && !postUnlockRegister && !registeredEns) {
     return (
-      <div className="mx-auto flex h-full max-w-md flex-col justify-center px-6 py-10">
-        <h1 className="text-2xl font-semibold tracking-tight">Welcome back</h1>
-        <p className="mt-2 text-sm text-slate-400">
-          Enter your vault passphrase to derive your wallet and start the AXL sidecar.
-        </p>
-        <label className="mt-6 block text-xs font-medium text-slate-300">
-          Passphrase
-          <input
-            type="password"
-            autoComplete="current-password"
-            value={unlockPass}
-            onChange={(e) => setUnlockPass(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && unlockPass && !busy) {
-                void handleUnlock();
-              }
-            }}
-            className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-emerald-600"
-          />
-        </label>
-        {error ? (
-          <p className="mt-3 text-sm text-red-400" role="alert">
-            {error}
-          </p>
-        ) : null}
-        <button
-          type="button"
-          disabled={busy || !unlockPass}
-          onClick={() => void handleUnlock()}
-          className={cn(
-            "mt-6 rounded-md px-4 py-2 text-sm font-medium",
-            busy || !unlockPass
-              ? "cursor-not-allowed bg-slate-800 text-slate-500"
-              : "bg-emerald-500/90 text-emerald-950 hover:bg-emerald-400",
-          )}
-        >
-          {busy ? "Unlocking…" : "Unlock"}
-        </button>
+      <div className="anton-screen relative flex h-full items-center justify-center overflow-hidden px-6 py-10">
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_42%_38%,rgba(56,189,248,0.12),transparent_24%)]" />
+        <div className="relative w-full max-w-md">
+          <div className="mb-7 text-center">
+            <p className="text-xs font-medium uppercase tracking-[0.28em] text-emerald-300/70">Anton</p>
+            <h1 className="mt-2 text-3xl font-semibold tracking-tight text-white">Welcome back</h1>
+          </div>
+
+          <div className="flex items-center gap-3 rounded-[1.6rem] border border-white/10 bg-[#1c2a3a]/90 p-2 shadow-2xl shadow-black/25 ring-1 ring-white/5 backdrop-blur-xl">
+            <input
+              type="password"
+              autoComplete="current-password"
+              value={unlockPass}
+              onChange={(e) => setUnlockPass(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && unlockPass && !busy) {
+                  void handleUnlock();
+                }
+              }}
+              placeholder="Enter your passcode"
+              className="h-11 min-w-0 flex-1 border-0 bg-transparent px-4 text-sm font-medium text-slate-100 placeholder:text-slate-300/70 outline-none"
+            />
+            <button
+              type="button"
+              disabled={busy || !unlockPass}
+              onClick={() => void handleUnlock()}
+              className="grid size-11 shrink-0 place-items-center rounded-2xl bg-emerald-300 text-xl font-black text-emerald-950 shadow-[0_10px_30px_rgba(52,211,153,0.28)] transition hover:bg-emerald-200 disabled:opacity-45"
+              aria-label="Unlock"
+            >
+              →
+            </button>
+          </div>
+          {error ? (
+            <p className="mt-4 rounded-2xl bg-red-500/10 px-4 py-2 text-sm text-red-200" role="alert">
+              {error}
+            </p>
+          ) : null}
+        </div>
       </div>
     );
   }
@@ -242,8 +242,9 @@ export function OnboardingPage() {
   /** Registration-only after unlock (no ENS yet) */
   if (postUnlockRegister && !registeredEns) {
     return (
-      <div className="mx-auto flex h-full max-w-md flex-col justify-center px-6 py-10">
-        <h1 className="text-2xl font-semibold tracking-tight">Choose your name</h1>
+      <div className="anton-screen flex h-full items-center justify-center px-6 py-10">
+        <div className="anton-card w-full max-w-md p-7">
+        <h1 className="text-3xl font-semibold tracking-tight text-white">Choose your name</h1>
         <p className="mt-2 text-sm text-slate-400">
           Register <code className="font-mono text-slate-300">username.anton.eth</code> directly on Sepolia ENS. Set{" "}
           <code className="font-mono text-slate-300">ANTON_ENS_REGISTRATION_PRIVATE_KEY</code> before launching the app.
@@ -298,6 +299,7 @@ export function OnboardingPage() {
             {error}
           </p>
         ) : null}
+        </div>
       </div>
     );
   }
@@ -305,7 +307,8 @@ export function OnboardingPage() {
   /** Success */
   if (registeredEns) {
     return (
-      <div className="mx-auto flex h-full max-w-lg flex-col justify-center px-6 py-10">
+      <div className="anton-screen flex h-full items-center justify-center px-6 py-10">
+        <div className="anton-card w-full max-w-lg p-7">
         <h1 className="text-2xl font-semibold tracking-tight text-emerald-400">You&apos;re set</h1>
         <p className="mt-2 text-sm text-slate-400">
           Registered as{" "}
@@ -325,15 +328,18 @@ export function OnboardingPage() {
         >
           Open chat
         </button>
+        </div>
       </div>
     );
   }
 
   /** New user wizard */
   return (
-    <div className="mx-auto flex h-full max-w-xl flex-col px-6 py-10">
-      <h1 className="text-2xl font-semibold tracking-tight">Welcome to Anton</h1>
-      <p className="mt-2 text-sm text-slate-400">
+    <div className="anton-screen h-full overflow-y-auto px-6 py-10">
+      <div className="anton-card mx-auto max-w-2xl p-7">
+      <p className="text-xs font-medium uppercase tracking-[0.28em] text-emerald-300/70">Agent identity</p>
+      <h1 className="mt-2 text-4xl font-semibold tracking-tight text-white">Welcome to Anton</h1>
+      <p className="mt-3 text-sm leading-6 text-slate-400">
         One mnemonic derives your Ethereum wallet and your AXL node identity. Your vault is encrypted with Argon2id
         + XChaCha20-Poly1305; chat stays in RAM only.
       </p>
@@ -529,6 +535,7 @@ export function OnboardingPage() {
           {error}
         </p>
       ) : null}
+      </div>
     </div>
   );
 }

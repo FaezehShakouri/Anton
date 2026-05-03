@@ -14,9 +14,9 @@
     "windows": [
       {
         "title": "Anton",
-        "width": 1100,
-        "height": 720,
-        "minWidth": 880,
+        "width": 1280,
+        "height": 780,
+        "minWidth": 1040,
         "minHeight": 600,
         "decorations": true,
         "resizable": true
